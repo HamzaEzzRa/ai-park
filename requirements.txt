@@ -1,0 +1,4 @@
+ipycanvas
+ipyevents
+jupyter
+numpy
