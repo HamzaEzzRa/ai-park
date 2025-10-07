@@ -10,11 +10,13 @@ from ipycanvas import Canvas, MultiCanvas, hold_canvas
 from park.internal.math import Rect, Vector2D
 from park.internal.physics import Physics
 from park.internal.sprite import SpriteShape
+from park.logic.grid import Grid2D
 from park.stats import Curve
 
 if TYPE_CHECKING:
     from park.entities.core import BaseEntity
     from park.simulation import Simulation
+    from park.logic.node import Node
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,8 @@ class Colors:
     minor_grid: str = "#3a3a40"
     major_grid: str = "#4a4a52"
     label: str = "#ffffff"
+    node_free: str = "rgba(120, 180, 255, 0.18)"
+    node_occupied: str = "rgba(255, 90, 90, 0.35)"
 
     ride: str = "#d276df"
     robot: str = "#78b7ff"
@@ -103,6 +107,7 @@ class Renderer:
     class RenderLayer(Enum):
         BACKGROUND = "background"
         GRID = "grid"
+        GRID_DEBUG = "grid_debug"
         RIDES = "rides"
         ROBOTS = "robots"
         VISITORS = "visitors"
@@ -159,6 +164,7 @@ class Renderer:
         self._render_call = {
             Renderer.RenderLayer.BACKGROUND: self._render_background,
             Renderer.RenderLayer.GRID: self._render_grid,
+            Renderer.RenderLayer.GRID_DEBUG: self._render_debug_grid,
             Renderer.RenderLayer.RIDES: self._render_rides,
             Renderer.RenderLayer.ROBOTS: self._render_robots,
             Renderer.RenderLayer.VISITORS: self._render_visitors,
@@ -172,6 +178,8 @@ class Renderer:
             camera.zoom
         )
 
+        self._show_debug_grids = False
+        self._debug_grid_force_full = False
         self._show_colliders = False
         self._show_stats = False
         self.update_draw(force=True)
@@ -195,6 +203,12 @@ class Renderer:
         if s != self.pixel_scale:
             self.pixel_scale = s
             self.mark_all_dirty()
+
+    def set_debug_grids_visible(self, enabled: bool):
+        if enabled != self._show_debug_grids:
+            self._show_debug_grids = enabled
+            self._debug_grid_force_full = enabled
+            self._dirty[Renderer.RenderLayer.GRID_DEBUG] = True
 
     def set_colliders_visible(self, enabled: bool):
         if enabled != self._show_colliders:
@@ -289,10 +303,23 @@ class Renderer:
         if force or cam_transform != self._last_cam_transform:
             self._last_cam_transform = cam_transform
             self._dirty[Renderer.RenderLayer.GRID] = True
+            if self._show_debug_grids:
+                self._debug_grid_force_full = True
 
         self._dirty[Renderer.RenderLayer.RIDES] = True
         self._dirty[Renderer.RenderLayer.ROBOTS] = True
         self._dirty[Renderer.RenderLayer.VISITORS] = True
+
+        if self._show_debug_grids:
+            need_debug = self._debug_grid_force_full
+            if not need_debug:
+                for grid in Grid2D._grids:
+                    if grid.has_dirty_nodes():
+                        need_debug = True
+                        break
+            if need_debug:
+                self._dirty[Renderer.RenderLayer.GRID_DEBUG] = True
+
         if self._show_colliders:
             self._dirty[Renderer.RenderLayer.COLLIDERS] = True
 
@@ -320,12 +347,13 @@ class Renderer:
     def _blit(self, name: str):
         front = self._front[name]
         back = self._back[name]
-        front.clear()
-        try:
-            front.image_smoothing_enabled = False
-        except Exception:
-            pass
-        front.draw_image(back, 0, 0)
+        with hold_canvas(front):  # keep clear/draw atomic to prevent flicker
+            front.clear()
+            try:
+                front.image_smoothing_enabled = False
+            except Exception:
+                pass
+            front.draw_image(back, 0, 0)
 
     @staticmethod
     def _hash01(key: str) -> float:
@@ -505,6 +533,74 @@ class Renderer:
                     canvas.line_to(cam.width, sy)
                     y += pixel_scale * grouping
                 canvas.stroke()
+
+    def _render_debug_grid(self, canvas: Canvas):
+        if not self._show_debug_grids or not Grid2D._grids:
+            self._clear(canvas, None)
+            self._debug_grid_force_full = False
+            return
+
+        cam = self.cam
+        zoom = cam.zoom
+        view_w, view_h = cam.get_viewport_size()
+        view_x0 = cam.x
+        view_y0 = cam.y
+        view_x1 = view_x0 + view_w
+        view_y1 = view_y0 + view_h
+        if self._debug_grid_force_full:
+            self._clear(canvas, None)
+            with hold_canvas(canvas):
+                canvas.line_width = 1
+                canvas.stroke_style = Colors.minor_grid
+                for grid in Grid2D._grids:
+                    for row in grid.nodes:
+                        for node in row:
+                            left = node.center.x - node.radius
+                            top = node.center.y - node.radius
+                            right = left + node.diameter
+                            bottom = top + node.diameter
+                            if right < view_x0 or left > view_x1 or bottom < view_y0 or top > view_y1:
+                                continue
+                            screen_pos = self.world_to_screen(left, top)
+                            width = node.diameter * zoom
+                            height = node.diameter * zoom
+                            canvas.fill_style = Colors.node_occupied if node.occupants else Colors.node_free
+                            canvas.fill_rect(screen_pos.x, screen_pos.y, width, height)
+                            canvas.stroke_rect(screen_pos.x, screen_pos.y, width, height)
+            self._debug_grid_force_full = False
+            for grid in Grid2D._grids:
+                if grid.has_dirty_nodes():
+                    grid.consume_dirty_nodes()
+            return
+
+        updates: list[tuple[Grid2D, list[tuple[int, int, "Node"]]]] = []
+        for grid in Grid2D._grids:
+            dirty_nodes = grid.consume_dirty_nodes()
+            if dirty_nodes:
+                updates.append((grid, dirty_nodes))
+        if not updates:
+            return
+
+        with hold_canvas(canvas):
+            canvas.line_width = 1
+            canvas.stroke_style = Colors.minor_grid
+            for _, dirty_nodes in updates:
+                for node in dirty_nodes:
+                    left = node.center.x - node.radius
+                    top = node.center.y - node.radius
+                    right = left + node.diameter
+                    bottom = top + node.diameter
+                    if right < view_x0 or left > view_x1 or bottom < view_y0 or top > view_y1:
+                        continue
+
+                    screen_pos = self.world_to_screen(left, top)
+                    width = node.diameter * zoom
+                    height = node.diameter * zoom
+                    canvas.clear_rect(screen_pos.x, screen_pos.y, width, height)
+
+                    canvas.fill_style = Colors.node_occupied if node.occupants else Colors.node_free
+                    canvas.fill_rect(screen_pos.x, screen_pos.y, width, height)
+                    canvas.stroke_rect(screen_pos.x, screen_pos.y, width, height)
 
     def _render_rides(self, canvas: Canvas):
         self._clear(canvas, None)

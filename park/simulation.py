@@ -12,6 +12,7 @@ from park.internal.layers import CollisionLayer
 from park.internal.math import Vector2D
 from park.internal.rigidbody import RigidBody
 from park.internal.sprite import Sprite, SpriteShape
+from park.logic.grid import Grid2D
 from park.logic.queue import VisitorQueue
 from park.render import Colors
 
@@ -70,6 +71,14 @@ class Simulation:
         self.spawn_rate = 0.005
         self.dynamic_spawn = True
         self._spawn_accum = 0.0
+
+        # Path finding grid
+        self.path_grid = Grid2D(
+            width=world.width,
+            height=world.height,
+            cell_size=16.0,
+            mask_bits=CollisionLayer.ALL_BITS & ~CollisionLayer.ENVIRONMENT
+        )
 
     def spawn_ride(
         self,
@@ -229,6 +238,8 @@ class Simulation:
             robot.update()
         for visitor in self.visitors:
             visitor.update()
+
+        self.path_grid.update_nodes()
 
     def set_spawn_rate(self, rate: float):
         self.spawn_rate = max(0.0, float(rate))

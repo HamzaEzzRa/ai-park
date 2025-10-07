@@ -142,5 +142,10 @@ class Visitor(BaseEntity):
         elif self.state == Visitor.State.EXITING:
             self.sprite.set_enabled(False)
             self.collider.set_enabled(False)
+            self.satisfaction += (
+                (2 * self.time_in_rides - self.time_in_queues)
+                / (self.time_in_rides + self.time_in_queues)
+            )
+            self.satisfaction = max(0.0, min(1.0, self.satisfaction))
             self.simulation.remove_visitor(self)
             self.delete()

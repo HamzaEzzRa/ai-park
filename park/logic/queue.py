@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Iterable, List, Optional, Tuple
 
 from park.entities.visitor import Visitor
 from park.internal.math import Vector2D
-from park.world import World
+
+if TYPE_CHECKING:
+    from park.world import World
 
 
 class VisitorQueue:

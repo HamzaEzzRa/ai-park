@@ -228,7 +228,7 @@ class Robot(BaseEntity):
                 ride in exclude_list
                 or (self.target_visitor and not ride.can_accept(self.target_visitor))
             ): continue
-            dist = (ride.transform.position - self.transform.position).magnitude()
+            dist = (ride.entrance_queue.tail - self.transform.position).magnitude()
             if dist < best_distance:
                 best_distance = dist
                 best_ride = ride

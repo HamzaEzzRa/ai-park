@@ -25,8 +25,8 @@ class Collider(ABC):
 
         # Bitmask-based collision filtering
         # Default: belongs to DEFAULT and collides with all bits
-        self._layer_bits: int = int(layer_bits) or CollisionLayer.DEFAULT
-        self._mask_bits: int = int(mask_bits) or CollisionLayer.ALL_BITS
+        self._layer_bits: int = int(layer_bits)
+        self._mask_bits: int = int(mask_bits)
 
     @property
     def enabled(self) -> bool:

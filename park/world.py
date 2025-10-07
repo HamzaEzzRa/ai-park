@@ -31,26 +31,28 @@ class World:
                 BoxCollider(
                     offset=Vector2D(width / 2, -height / 2),
                     size=Vector2D(2 * width, height),
-                    layer_bits=CollisionLayer.ENVIRONMENT,
-                    mask_bits=CollisionLayer.ROBOT
+                    layer_bits=CollisionLayer.ENVIRONMENT
                 )
             ),
             self._transform.attach_component(
                 BoxCollider(
                     offset=Vector2D(width * 1.5, height / 2),
                     size=Vector2D(width, 2 * height),
+                    layer_bits=CollisionLayer.ENVIRONMENT
                 )
             ),
             self._transform.attach_component(
                 BoxCollider(
                     offset=Vector2D(width / 2, height * 1.5),
                     size=Vector2D(2 * width, height),
+                    layer_bits=CollisionLayer.ENVIRONMENT
                 )
             ),
             self._transform.attach_component(
                 BoxCollider(
                     offset=Vector2D(-width / 2, height / 2),
                     size=Vector2D(width, 2 *height),
+                    layer_bits=CollisionLayer.ENVIRONMENT
                 )
             ),
         ]

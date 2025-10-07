@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from itertools import combinations
-from typing import TYPE_CHECKING, Dict, Iterable, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
 
 from park.internal.collider import CollisionLayer
-from park.internal.math import Vector2D
+from park.internal.math import Rect, Vector2D
 from park.internal.rigidbody import RigidBody
 
 if TYPE_CHECKING:
@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 
 class Physics:
-    _colliders: list["Collider"] = []
-    _rigidbodies: list["RigidBody"] = []
+    _colliders: List["Collider"] = []
+    _rigidbodies: List["RigidBody"] = []
     # Track collision state per-collider so multi-collider entities work
     _collision_states: Dict["Collider", set[int]] = {}
 
@@ -47,6 +47,10 @@ class Physics:
         cls._colliders.clear()
 
     @classmethod
+    def bodies(cls) -> Iterable["RigidBody"]:
+        return tuple(cls._rigidbodies)
+
+    @classmethod
     def step(cls, delta_time: float) -> None:
         # Integrate velocities
         for body in cls._rigidbodies:
@@ -54,7 +58,7 @@ class Physics:
 
         # Resolve collisions (collider-vs-collider)
         current_contacts = set()
-        active_colliders = tuple(cls._active_colliders())
+        active_colliders = tuple(cls.active_colliders())
         for a, b in combinations(active_colliders, 2):
             # Skip colliders on the same Transform to avoid self-collision
             if getattr(a, "transform", None) is getattr(b, "transform", None):
@@ -76,11 +80,22 @@ class Physics:
         cls._cleanup_exits(current_contacts)
 
     @classmethod
-    def bodies(cls) -> Iterable["RigidBody"]:
-        return tuple(cls._rigidbodies)
+    def check_rect(cls, rect: Rect, mask_bits: int | CollisionLayer) -> List["Collider"]:
+        hits = []
+        for col in cls.active_colliders():
+            if not CollisionLayer.can_collide(
+                col.layer_bits,
+                col.mask_bits,
+                CollisionLayer.ALL_BITS,
+                mask_bits
+            ):
+                continue
+            if rect.intersects(col.bounds()):
+                hits.append(col)
+        return hits
 
     @classmethod
-    def _active_colliders(cls) -> Iterable["Collider"]:
+    def active_colliders(cls) -> Iterable["Collider"]:
         for col in cls._colliders:
             if getattr(col, "enabled", False) and getattr(col, "transform", None) is not None:
                 yield col
