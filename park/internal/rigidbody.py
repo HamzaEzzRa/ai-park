@@ -47,6 +47,8 @@ class RigidBody:
         return self._velocity
 
     def set_velocity(self, velocity: Vector2D) -> None:
+        self._move_target = None
+        self._move_speed = None
         self._velocity = velocity
 
     @property
@@ -97,13 +99,21 @@ class RigidBody:
     def apply_impulse(self, impulse: Vector2D) -> None:
         if self.is_static or self.mass <= 0:
             return
-        self._velocity = self._velocity + (impulse / self.mass)
+        self.set_velocity(
+            self._velocity + (impulse / self.mass)
+        )
 
     def apply_force(self, force: Vector2D, delta_time: float) -> None:
         if self.is_static or self.mass <= 0:
             return
         acceleration = force / self.mass
-        self._velocity = self._velocity + acceleration * delta_time
+        self.set_velocity(
+            self._velocity + acceleration * delta_time
+        )
+
+    def move_position(self, position: Vector2D, speed: float = None) -> None:
+        self._move_target = position
+        self._move_speed = speed
 
     def translate(self, delta: Vector2D) -> None:
         if not self.enabled:
@@ -116,6 +126,21 @@ class RigidBody:
     def integrate(self, delta_time: float) -> None:
         if self._is_static or not self._enabled:
             return
+
+        if self._move_target is not None:
+            direction = self._move_target - self.transform.position
+            distance = direction.magnitude()
+            if distance > 0.0:
+                if self._move_speed is not None and self._move_speed > 0.0:
+                    move_distance = min(distance, self._move_speed * delta_time)
+                else:
+                    move_distance = distance
+                move_vector = direction.normalized() * move_distance
+                self._velocity = move_vector / delta_time
+            else:
+                self._move_target = None
+                self._velocity = Vector2D(0.0, 0.0)
+
         if self._friction > 0.0:
             damping = max(0.0, 1.0 - self._friction * delta_time)
             self._velocity = self._velocity * damping

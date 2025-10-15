@@ -35,8 +35,11 @@ class Vector2D:
     def copy(self) -> "Vector2D":
         return Vector2D(self.x, self.y)
 
+    def squared_magnitude(self) -> float:
+        return self.x**2 + self.y**2
+
     def magnitude(self) -> float:
-        return np.sqrt(self.x**2 + self.y**2)
+        return np.sqrt(self.squared_magnitude())
 
     def normalized(self) -> "Vector2D":
         mag = self.magnitude()

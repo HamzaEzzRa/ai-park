@@ -77,6 +77,18 @@ class Transform:
     def set_scale(self, scale: Vector2D) -> None:
         self.scale = scale.copy()
 
+    def transform_point(self, point: Vector2D) -> Vector2D:
+        return Vector2D(
+            self.position.x + point.x * self.scale.x,
+            self.position.y + point.y * self.scale.y,
+        )
+
+    def inverse_transform_point(self, point: Vector2D) -> Vector2D:
+        return Vector2D(
+            (point.x - self.position.x) / self.scale.x,
+            (point.y - self.position.y) / self.scale.y,
+        )
+
     def copy(self) -> "Transform":
         return Transform(self.position.copy(), self.scale.copy())
 

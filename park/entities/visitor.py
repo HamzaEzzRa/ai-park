@@ -105,15 +105,11 @@ class Visitor(BaseEntity):
             direction = self.target_position - self.transform.position
             distance = direction.magnitude()
             if distance < 1e-2:
-                snapped = self.simulation.world.snap(self.transform.position)
-                self.transform.set_position(snapped)
                 self.state = Visitor.State.IN_QUEUE
             else:
                 direction = direction.normalized()
                 move_distance = min(self.move_speed, distance)
                 self.transform.translate(direction * move_distance)
-                snapped = self.simulation.world.snap(self.transform.position)
-                self.transform.set_position(snapped)
         elif self.state == Visitor.State.IN_QUEUE:
             self.time_in_queues += 1
             if (

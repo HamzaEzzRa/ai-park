@@ -119,17 +119,17 @@ class VisitorQueue:
     def slot_position(self, index: int) -> Vector2D:
         centers = self._compute_centers(self._groups)
         if index >= len(centers):
-            return self.world.snap(self.head)
+            return self.head
         dir_norm = self._direction_normalized()
         slot = self.head + dir_norm * centers[index]
-        return self.world.snap(slot)
+        return slot
 
     def iter_assignments(self) -> Iterable[Tuple[Visitor, Vector2D]]:
         dir_norm = self._direction_normalized()
         centers = self._compute_centers(self._groups)
         for visitor, offset in zip(self._groups, centers):
             pos = self.head + dir_norm * offset
-            yield visitor, self.world.snap(pos)
+            yield visitor, pos
 
     def update_targets(self):
         dir_norm = self._direction_normalized()
@@ -140,7 +140,7 @@ class VisitorQueue:
             visitor.set_queue_state(queue=self, index=idx, size=queue_size)
             if visitor.target_position != pos:
                 visitor.state = Visitor.State.QUEUEING
-            visitor.move_to(self.world.snap(pos))
+            visitor.move_to(pos)
 
     def _direction_normalized(self) -> Vector2D:
         mag = self.direction.magnitude()

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Dict
 
 from ipycanvas import Canvas, MultiCanvas, hold_canvas
 
+from park.entities.robot import Robot
 from park.internal.math import Rect, Vector2D
 from park.internal.physics import Physics
 from park.internal.sprite import SpriteShape
@@ -36,6 +37,9 @@ class Colors:
     ride_progress_bg: str = "#4f5158"
     ride_loading: str = "#16c542"
     ride_unloading: str = "#ff5f5f"
+
+    robot_selection: str = "rgba(22, 197, 66, 0.65)"
+    robot_waypoint: str = "rgba(255, 255, 255, 0.35)"
 
 
 class Camera:
@@ -131,8 +135,11 @@ class Renderer:
         self.mcanvas = MultiCanvas(
             len(Renderer.RenderLayer),
             width=camera.width,
-            height=camera.height
+            height=camera.height,
         )
+        self.mcanvas.layout.width = f"{camera.width}px"
+        self.mcanvas.layout.height = f"{camera.height}px"
+
         self._front = {
             name: self.mcanvas[i]
             for i, name in enumerate(Renderer.RenderLayer)
@@ -260,8 +267,8 @@ class Renderer:
 
     def screen_to_world(self, point, y=None) -> Vector2D:
         x, y = Renderer._extract_xy(point, y)
-        wx = (x - self.cam.x) / self.cam.zoom
-        wy = (y - self.cam.y) / self.cam.zoom
+        wx = x / self.cam.zoom + self.cam.x
+        wy = y / self.cam.zoom + self.cam.y
         return Vector2D(wx, wy)
 
     def world_to_screen(self, point, y=None) -> Vector2D:
@@ -293,6 +300,21 @@ class Renderer:
         # Adjust translation so the focus is on (wx, wy)
         self.cam.x = x - stw.x * self.cam.zoom
         self.cam.y = y - stw.y * self.cam.zoom
+
+    def select_at_point(self, point: Vector2D, clear: bool):
+        world_point = self.screen_to_world(point)
+
+        if clear:
+            for robot in Robot.get_debug_path_robots():
+                robot.set_debug_path(False)
+
+        for robot in self.sim.robots:
+            if (
+                robot.bounds is not None
+                and robot.bounds.contains(world_point)
+            ):
+                robot.set_debug_path(True)
+                return
 
     def update_draw(self, force: bool = False):
         cam_transform = (
@@ -675,6 +697,36 @@ class Renderer:
         with hold_canvas(canvas):
             for robot in self.sim.robots:
                 self._draw_sprite(canvas, robot)
+
+                if robot.debug_path:
+                    # draw selection circle
+                    center = self.world_to_screen(robot.transform.position)
+                    radius = (max(robot.sprite.size.x, robot.sprite.size.y) * self.cam.zoom)
+                    if radius > 0:
+                        canvas.stroke_style = Colors.robot_selection
+                        canvas.line_width = max(2.0, 0.15 * radius)
+                        canvas.begin_path()
+                        canvas.move_to(center.x + radius, center.y)
+                        canvas.arc(center.x, center.y, radius, 0, 2 * math.pi)
+                        canvas.stroke()
+
+                    if robot.current_plan is not None:
+                        # draw waypoints as little hollow dots with a line to each
+                        waypoints = robot.current_plan.remaining_waypoints
+                        if waypoints:
+                            canvas.fill_style = Colors.robot_waypoint
+                            canvas.stroke_style = Colors.label
+                            canvas.line_width = 1
+                            canvas.begin_path()
+                            canvas.move_to(center.x, center.y)
+                            for wp in waypoints:
+                                wp_screen = self.world_to_screen(wp)
+                                canvas.line_to(wp_screen.x, wp_screen.y)
+                                canvas.move_to(wp_screen.x, wp_screen.y)
+                                canvas.arc(wp_screen.x, wp_screen.y, max(2.0, 0.2 * radius), 0, 2 * math.pi)
+                                canvas.move_to(wp_screen.x, wp_screen.y)
+                            canvas.stroke()
+                            canvas.fill()
 
     def _render_visitors(self, canvas: Canvas):
         self._clear(canvas, None)

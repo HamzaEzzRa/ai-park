@@ -12,7 +12,6 @@ from park.internal.layers import CollisionLayer
 from park.internal.math import Vector2D
 from park.internal.rigidbody import RigidBody
 from park.internal.sprite import Sprite, SpriteShape
-from park.logic.grid import Grid2D
 from park.logic.queue import VisitorQueue
 from park.render import Colors
 
@@ -72,14 +71,6 @@ class Simulation:
         self.dynamic_spawn = True
         self._spawn_accum = 0.0
 
-        # Path finding grid
-        self.path_grid = Grid2D(
-            width=world.width,
-            height=world.height,
-            cell_size=16.0,
-            mask_bits=CollisionLayer.ALL_BITS & ~CollisionLayer.ENVIRONMENT
-        )
-
     def spawn_ride(
         self,
         name: str,
@@ -132,8 +123,6 @@ class Simulation:
                     self.world.height - sprite_size.y // 2
                 )
             )
-        # Respect world space snapping for initial position
-        position = self.world.snap(position)
         if move_speed is None:
             move_speed = 1.0
 
@@ -154,23 +143,13 @@ class Simulation:
             layer_bits=CollisionLayer.ROBOT,
             mask_bits=CollisionLayer.ALL_BITS
         ))
-        robot.attach_component(RigidBody(mass=1.0, is_static=False, bounciness=0.8))
-
-        # Give robots an initial random direction so they roam immediately
-        angle = self.rng.uniform(0, 2 * np.pi)
-        robot.set_direction(np.cos(angle), np.sin(angle))
+        robot.attach_component(RigidBody(
+            mass=1.0,
+            is_static=False,
+            friction=0.0,
+            bounciness=1.0
+        ))
         self.robots.append(robot)
-
-    def _reposition_robot(self, robot: Robot, attempts: int = 16) -> None:
-        for _ in range(attempts):
-            new_pos = Vector2D(
-                self.rng.uniform(0, self.world.width),
-                self.rng.uniform(0, self.world.height)
-            )
-            new_pos = self.world.snap(new_pos)
-            robot.transform.set_position(new_pos)
-            if not robot._detect_collision():
-                return
 
     def spawn_visitor(
         self,
@@ -238,8 +217,7 @@ class Simulation:
             robot.update()
         for visitor in self.visitors:
             visitor.update()
-
-        self.path_grid.update_nodes()
+        self.world.update()
 
     def set_spawn_rate(self, rate: float):
         self.spawn_rate = max(0.0, float(rate))

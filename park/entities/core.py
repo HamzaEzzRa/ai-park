@@ -69,7 +69,7 @@ class BaseEntity:
     @property
     def bounds(self) -> Optional[Rect]:
         if self.collider:
-            return self.collider.bounds
+            return self.collider.bounds()
         elif self.sprite:
             size = self.sprite.size
             half_size = size // 2
