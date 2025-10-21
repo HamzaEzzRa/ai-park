@@ -147,9 +147,11 @@ class Physics:
         # Positional correction
         correction = normal * (penetration / inv_mass_sum)
         if rb_a is not None and inv_mass_a > 0 and not rb_a.is_static:
-            rb_a.translate(correction * -inv_mass_a)
+            correction_a = rb_a._apply_linear_constraints(correction * -inv_mass_a)
+            rb_a.translate(correction_a)
         if rb_b is not None and inv_mass_b > 0 and not rb_b.is_static:
-            rb_b.translate(correction * inv_mass_b)
+            correction_b = rb_b._apply_linear_constraints(correction * inv_mass_b)
+            rb_b.translate(correction_b)
 
         # Resolve velocities
         va = Vector2D.zero() if rb_a is None else rb_a.velocity
@@ -166,9 +168,11 @@ class Physics:
         impulse = normal * impulse_mag
 
         if rb_a is not None and inv_mass_a > 0 and not rb_a.is_static:
-            rb_a.set_velocity(va - impulse * inv_mass_a)
+            delta_va = rb_a._apply_linear_constraints(impulse * inv_mass_a)
+            rb_a.set_velocity(va - delta_va)
         if rb_b is not None and inv_mass_b > 0 and not rb_b.is_static:
-            rb_b.set_velocity(vb + impulse * inv_mass_b)
+            delta_vb = rb_b._apply_linear_constraints(impulse * inv_mass_b)
+            rb_b.set_velocity(vb + delta_vb)
 
     @classmethod
     def _pair_key(cls, a: "Collider", b: "Collider") -> int:

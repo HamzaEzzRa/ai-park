@@ -402,16 +402,16 @@ class Renderer:
             return False
 
         center = self.world_to_screen(entity.transform.position)
-        image = sprite.ensure_image()
         zoom = self.cam.zoom
         width = sprite.size.x * zoom
         height = sprite.size.y * zoom
         if width <= 0 or height <= 0:
             return False
 
-        if image is not None:
+        _buffer = sprite.ensure_canvas()
+        if _buffer is not None:
             canvas.draw_image(
-                image,
+                _buffer,
                 center.x - width / 2.0,
                 center.y - height / 2.0,
                 width,
