@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 from park.internal.collider import Collider
 from park.internal.math import Vector2D
@@ -16,6 +16,7 @@ class RigidBody:
         is_static: bool = False,
         bounciness: float = 0.0,
         friction: float = 0.0,
+        freeze_position: List[bool] = [False, False]  # x, y
     ):
         self._transform: Transform = None
         self._velocity: Vector2D = Vector2D(0.0, 0.0)
@@ -23,6 +24,7 @@ class RigidBody:
         self._is_static: bool = is_static
         self._bounciness: float = bounciness
         self._friction: float = friction
+        self._freeze_position: List[bool] = freeze_position
         self._enabled: bool = True
 
     @property
@@ -49,7 +51,7 @@ class RigidBody:
     def set_velocity(self, velocity: Vector2D) -> None:
         self._move_target = None
         self._move_speed = None
-        self._velocity = velocity
+        self._velocity = self._apply_linear_constraints(velocity)
 
     @property
     def mass(self) -> float:
@@ -118,10 +120,17 @@ class RigidBody:
     def translate(self, delta: Vector2D) -> None:
         if not self.enabled:
             return
-        self.transform.position = Vector2D(
+
+        new_position = Vector2D(
             self.position.x + delta.x,
             self.position.y + delta.y,
         )
+        if self._freeze_position[0]:
+            new_position.x = self.position.x
+        if self._freeze_position[1]:
+            new_position.y = self.position.y
+
+        self.transform.position = new_position
 
     def integrate(self, delta_time: float) -> None:
         if self._is_static or not self._enabled:
@@ -136,15 +145,31 @@ class RigidBody:
                 else:
                     move_distance = distance
                 move_vector = direction.normalized() * move_distance
-                self._velocity = move_vector / delta_time
+                self._velocity = self._apply_linear_constraints(move_vector / delta_time)
             else:
                 self._move_target = None
                 self._velocity = Vector2D(0.0, 0.0)
 
         if self._friction > 0.0:
             damping = max(0.0, 1.0 - self._friction * delta_time)
-            self._velocity = self._velocity * damping
+            self._velocity = self._apply_linear_constraints(self._velocity * damping)
             if abs(self._velocity.x) < 1e-4 and abs(self._velocity.y) < 1e-4:
                 self._velocity = Vector2D.zero()
 
         self.translate(self._velocity * delta_time)
+
+    def freeze_position(self, *, x: Optional[bool] = None, y: Optional[bool] = None) -> None:
+        if x is not None:
+            self._freeze_position[0] = bool(x)
+            if x:
+                self._velocity = Vector2D(0.0, self._velocity.y)
+        if y is not None:
+            self._freeze_position[1] = bool(y)
+            if y:
+                self._velocity = Vector2D(self._velocity.x, 0.0)
+
+    def _apply_linear_constraints(self, vec: Vector2D) -> Vector2D:
+        return Vector2D(
+            0.0 if self._freeze_position[0] else vec.x,
+            0.0 if self._freeze_position[1] else vec.y,
+        )
