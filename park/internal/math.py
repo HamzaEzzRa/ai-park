@@ -71,3 +71,15 @@ class Rect:
             or self.y + self.height < other.y
             or self.y > other.y + other.height
         )
+
+    @staticmethod
+    def from_center(
+        center: Vector2D,
+        size: Vector2D
+    ) -> "Rect":
+        return Rect(
+            center.x - size.x / 2,
+            center.y - size.y / 2,
+            size.x,
+            size.y
+        )
