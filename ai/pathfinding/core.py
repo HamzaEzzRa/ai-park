@@ -69,6 +69,8 @@ class MovementStrategy:
     class Type(Enum):
         LINEAR = "linear"
         ASTAR = "astar"
+        BFS = "bfs"
+        DFS = "dfs"
 
     def __init__(
         self,

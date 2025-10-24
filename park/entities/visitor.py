@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from park.entities.core import BaseEntity
 from park.internal.math import Vector2D
@@ -10,6 +10,8 @@ from park.internal.math import Vector2D
 if TYPE_CHECKING:
     from park.entities.ride import Ride
     from park.entities.robot import Robot
+    from park.logic.queue import VisitorQueue
+    from park.simulation import Simulation
 
 
 class Visitor(BaseEntity):
@@ -21,18 +23,22 @@ class Visitor(BaseEntity):
         RIDING = "riding"
         EXITING = "exiting"
 
+    _tooltip_visitors: set["Visitor"] = set()
+
     def __init__(
         self,
-        simulation,
+        simulation: Simulation,
         position: Vector2D,
         group_size: int,
         move_speed: float,
-        desired_rides: int
+        desired_rides: int,
+        member_spacing: float
     ):
         super().__init__(simulation, position)
         self.group_size = group_size
         self.move_speed = move_speed
         self.desired_rides = desired_rides
+        self.member_spacing = member_spacing
 
         self.state = Visitor.State.QUEUEING
         self.completed_rides = 0
@@ -40,10 +46,10 @@ class Visitor(BaseEntity):
         self.time_in_rides = 0
         self.satisfaction = 0.5
 
-        self.base_dissatisfaction_rate = 0.0001
+        self.base_dissatisfaction_rate = 0.000075
         self.max_tail_boost = 0.4
 
-        self.queue_ref = None
+        self.queue_ref: Optional[VisitorQueue] = None
         self.queue_index: Optional[int] = None
         self.queue_size: int = 0
 
@@ -51,6 +57,23 @@ class Visitor(BaseEntity):
         self.assigned_ride: Optional[Ride] = None
 
         self.target_position = self.transform.position.copy()
+
+        self._tooltip_visible = False
+
+    @staticmethod
+    def get_tooltip_visitors() -> List[Visitor]:
+        return list(Visitor._tooltip_visitors)
+
+    @property
+    def tooltip_visible(self) -> bool:
+        return self._tooltip_visible
+
+    def set_tooltip_visible(self, value: bool) -> None:
+        self._tooltip_visible = value
+        if value:
+            Visitor._tooltip_visitors.add(self)
+        elif not value:
+            Visitor._tooltip_visitors.discard(self)
 
     @property
     def dissatisfaction_rate(self) -> float:
@@ -79,7 +102,7 @@ class Visitor(BaseEntity):
         n = max(1, int(self.group_size))
         cols = max(1, int(math.ceil(math.sqrt(n))))
         rows = int(math.ceil(n / cols))
-        spacing = self._member_spacing
+        spacing = self.member_spacing
         width = max(spacing, cols * spacing)
         height = max(spacing, rows * spacing)
         padding = spacing * 0.25
@@ -102,12 +125,12 @@ class Visitor(BaseEntity):
         if self.state == Visitor.State.QUEUEING:
             if not self.target_position:
                 return
-            direction = self.target_position - self.transform.position
-            distance = direction.magnitude()
-            if distance < 1e-2:
+            if self.transform.position == self.target_position:
                 self.state = Visitor.State.IN_QUEUE
             else:
-                direction = direction.normalized()
+                delta = self.target_position - self.transform.position
+                direction = delta.normalized()
+                distance = delta.magnitude()
                 move_distance = min(self.move_speed, distance)
                 self.transform.translate(direction * move_distance)
         elif self.state == Visitor.State.IN_QUEUE:
@@ -118,7 +141,7 @@ class Visitor(BaseEntity):
                 and self.queue_ref == self.simulation.exit_queue
                 and self == self.simulation.exit_queue.groups[0]
             ):
-                self.simulation.exit_queue.pop(0)
+                self.simulation.exit_queue.remove(self)
                 self.state = Visitor.State.EXITING
         elif self.state == Visitor.State.ON_BOARD:
             self.collider.set_enabled(False)

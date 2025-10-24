@@ -8,10 +8,11 @@ class CollisionLayer(IntFlag):
     """Bit flags used for collider layer/mask filtering."""
 
     DEFAULT = 1 << 0
-    ROBOT = 1 << 1
-    VISITOR = 1 << 2
-    RIDE = 1 << 3
-    ENVIRONMENT = 1 << 4
+    CHARGER = 1 << 1
+    ROBOT = 1 << 2
+    VISITOR = 1 << 3
+    RIDE = 1 << 4
+    ENVIRONMENT = 1 << 5
 
     ALL_BITS = 0xFFFFFFFF
     NONE = 0x00000000

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
 
+from park.entities.charger import Charger
 from park.entities.ride import Ride
 from park.entities.robot import Robot
 from park.entities.visitor import Visitor
@@ -16,6 +17,7 @@ from park.logic.queue import VisitorQueue
 from park.render import Colors
 
 if TYPE_CHECKING:
+    from park.logic.queue import RobotQueue
     from park.world import World
 
 
@@ -23,6 +25,7 @@ class Simulation:
     def __init__(
             self,
             world: World,
+            starting_funds: float = 10000.0,
             rng: Optional[np.random.Generator] = None,
         ):
         self.world = world
@@ -30,6 +33,7 @@ class Simulation:
             rng = np.random.default_rng()
         self.rng = rng
 
+        self.chargers: List[Charger] = []
         self.rides: List[Ride] = []
         self.robots: List[Robot] = []
         self.visitors: List[Visitor] = []
@@ -38,18 +42,21 @@ class Simulation:
         self.left_satisfaction: float = 0.0
 
         self.current_step = 0
+        self.funds = starting_funds
+        self.funds_delta = 0.0
 
         # Entrance queue configuration
         entrance_queue_head = Vector2D(
             self.world.width // 2,
-            self.world.height - self.world.cell_size // 2
+            self.world.width
         )
         entrance_queue_tail = Vector2D(
             self.world.width,
-            self.world.height - self.world.cell_size // 2
+            self.world.width
         )
         entrance_queue_spacing = max(self.world.cell_size // 16, 4.0)
         self.entrance_queue = VisitorQueue(
+            name="Park Entrance",
             world=self.world,
             head=entrance_queue_head,
             tail=entrance_queue_tail,
@@ -61,6 +68,7 @@ class Simulation:
         exit_queue_tail = Vector2D(self.world.width // 2, self.world.cell_size)
         exit_queue_spacing = max(self.world.cell_size // 16, 4.0)
         self.exit_queue = VisitorQueue(
+            name="Park Exit",
             world=self.world,
             head=exit_queue_head,
             tail=exit_queue_tail,
@@ -71,12 +79,43 @@ class Simulation:
         self.dynamic_spawn = True
         self._spawn_accum = 0.0
 
+    def spawn_charger(
+        self,
+        position: Vector2D,
+        size: Vector2D,
+        charge_queue: RobotQueue,
+        charging_rate: float,
+        cost_rate: float
+    ):
+        charger = Charger(
+            simulation=self,
+            position=position,
+            charge_queue=charge_queue,
+            charging_rate=charging_rate,
+            cost_rate=cost_rate
+        )
+        charger.attach_component(
+            Sprite(
+                size=size,
+                color=Colors.charger,
+                shape=SpriteShape.RECT,
+            )
+        )
+        charger.attach_component(BoxCollider(
+            size=size,
+            layer_bits=CollisionLayer.CHARGER,
+            mask_bits=CollisionLayer.ROBOT
+        ))
+        charger.attach_component(RigidBody(mass=0.0, is_static=True))
+        self.chargers.append(charger)
+
     def spawn_ride(
         self,
         name: str,
         position: Vector2D,
         capacity: int,
         duration: int,
+        entry_price: float,
         entrance_queue: VisitorQueue,
         exit_queue: VisitorQueue
     ):
@@ -86,6 +125,7 @@ class Simulation:
             position=position,
             capacity=capacity,
             duration=duration,
+            entry_price=entry_price,
             entrance_queue=entrance_queue,
             exit_queue=exit_queue
         )
@@ -108,19 +148,19 @@ class Simulation:
 
     def spawn_robot(
         self,
+        size: Vector2D,
         position: Optional[Vector2D] = None,
         move_speed: Optional[float] = None
     ):
-        sprite_size = Vector2D(18.0, 18.0)
         if position is None:
             position = Vector2D(
                 self.rng.uniform(
-                    sprite_size.x // 2,
-                    self.world.width - sprite_size.x // 2
+                    size.x // 2,
+                    self.world.width - size.x // 2
                 ),
                 self.rng.uniform(
-                    sprite_size.y // 2,
-                    self.world.height - sprite_size.y // 2
+                    size.y // 2,
+                    self.world.height - size.y // 2
                 )
             )
         if move_speed is None:
@@ -133,13 +173,13 @@ class Simulation:
         )
         robot.attach_component(
             Sprite(
-                size=sprite_size,
+                size=size,
                 color=Colors.robot,
                 shape=SpriteShape.RECT,
             )
         )
         robot.attach_component(BoxCollider(
-            size=sprite_size,
+            size=size,
             layer_bits=CollisionLayer.ROBOT,
             mask_bits=CollisionLayer.ALL_BITS
         ))
@@ -167,16 +207,16 @@ class Simulation:
             position=self.entrance_queue.tail,
             group_size=group_size,
             move_speed=move_speed,
-            desired_rides=desired_rides
+            desired_rides=desired_rides,
+            member_spacing=8.0
         )
-        visitor._member_spacing = 8.0
         group_bounds = visitor.group_bounds()
         visitor.attach_component(
             Sprite(
                 size=group_bounds,
                 color=Colors.visitor,
                 shape=SpriteShape.GROUP,
-                data={"spacing": visitor._member_spacing, "members": visitor.group_size},
+                data={"spacing": visitor.member_spacing, "members": visitor.group_size},
             )
         )
         # Check if we can add to entrance queue
@@ -211,6 +251,8 @@ class Simulation:
         self._maybe_spawn_visitors()
         self.entrance_queue.update_targets()
         self.exit_queue.update_targets()
+        for charger in self.chargers:
+            charger.update()
         for ride in self.rides:
             ride.update()
         for robot in self.robots:
@@ -218,6 +260,9 @@ class Simulation:
         for visitor in self.visitors:
             visitor.update()
         self.world.update()
+
+        self.funds += self.funds_delta
+        self.funds_delta = 0.0
 
     def set_spawn_rate(self, rate: float):
         self.spawn_rate = max(0.0, float(rate))

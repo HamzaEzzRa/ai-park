@@ -19,7 +19,7 @@ class World:
         self.grid = Grid2D(
             width,
             height,
-            cell_size=cell_size // 4,
+            cell_size=cell_size // 2,
             mask_bits=CollisionLayer.ALL_BITS & ~CollisionLayer.ENVIRONMENT
         )
 

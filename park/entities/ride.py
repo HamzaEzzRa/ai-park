@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 from enum import Enum
+from typing import TYPE_CHECKING, List
 
 from park.entities.core import BaseEntity
 from park.entities.visitor import Visitor
 from park.internal.math import Vector2D
 from park.logic.queue import VisitorQueue
+
+if TYPE_CHECKING:
+    from park.simulation import Simulation
 
 
 class Ride(BaseEntity):
@@ -17,13 +23,16 @@ class Ride(BaseEntity):
         RUNNING = "running"
         UNLOADING = "unloading"
 
+    _tooltip_rides: set["Ride"] = set()
+
     def __init__(
         self,
-        simulation,
+        simulation: Simulation,
         position: Vector2D,
         name: str,
         capacity: int,
         duration: int,
+        entry_price: float,
         entrance_queue: VisitorQueue,
         exit_queue: VisitorQueue
     ):
@@ -31,12 +40,14 @@ class Ride(BaseEntity):
         self.name = name
         self.capacity = capacity
         self.duration = duration
+        self.entry_price = entry_price
         self.enjoyment_rate = 0.0005 # TODO: make this more interesting (varies per ride, group size, ...), and less effective when repeating the same ride
         self.entrance_queue = entrance_queue
         self.exit_queue = exit_queue
 
-        # Treat riders as a queue for practicality
+        # Treat riders as a queue for convenience
         self.riders = VisitorQueue(
+            name=f"{self.name} Riders",
             world=simulation.world,
             head=position,
             tail=position,
@@ -47,6 +58,23 @@ class Ride(BaseEntity):
         self.operational_state = Ride.OperationalState.OPEN
         self.run_state = Ride.RunState.LOADING
         self.timer = 0
+
+        self._tooltip_visible = False
+
+    @staticmethod
+    def get_tooltip_rides() -> List["Ride"]:
+        return list(Ride._tooltip_rides)
+
+    @property
+    def tooltip_visible(self) -> bool:
+        return self._tooltip_visible
+
+    def set_tooltip_visible(self, value: bool) -> None:
+        self._tooltip_visible = value
+        if value:
+            Ride._tooltip_rides.add(self)
+        elif not value:
+            Ride._tooltip_rides.discard(self)
 
     def update(self):
         super().update()
@@ -69,7 +97,7 @@ class Ride(BaseEntity):
                     self.riders.add(visitor)
                     visitor.state = Visitor.State.ON_RIDE
                     visitor.assigned_ride = self
-                    self.entrance_queue.pop(0)
+                    visitor.transform.set_position(self.transform.position)
             if (
                 self.riders.member_count == self.capacity
                 or not self.riders.can_accept_members(visitor.group_size)
@@ -93,7 +121,6 @@ class Ride(BaseEntity):
                     and self.exit_queue.can_accept_members(visitor.group_size)
                     and self.exit_queue.can_fit(visitor)
                 ): return
-                self.riders.remove(visitor)
                 self.exit_queue.add(visitor)
                 visitor.state = Visitor.State.QUEUEING
                 visitor.assigned_ride = None

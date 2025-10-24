@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from enum import Enum
+from enum import Enum, IntFlag
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 from graphviz import Digraph
 
@@ -21,7 +21,7 @@ class State:
 
     def __init__(
         self,
-        name: Any,
+        name: str | Enum,
         *,
         on_enter: Optional[Callback | Sequence[Callback]] = None,
         on_exit: Optional[Callback | Sequence[Callback]] = None,
@@ -141,19 +141,25 @@ class Machine:
 
     wildcard_symbol = "*"
 
-    def __init__(self, states: Optional[Sequence[str | Enum | State]] = None, initial_state: Optional[str | Enum] = None) -> None:
+    def __init__(
+        self,
+        states: Optional[Sequence[str | Enum | State]] = None,
+        initial_state: Optional[str | Enum] = None
+    ) -> None:
+        if initial_state is not None:
+            if states is None or initial_state not in states:
+                raise ValueError("Initial state must be in the provided list of states.")
+
         self._states: Dict[str, State] = {}
         self._events: Dict[str, Event] = {}
         self._current_state: Optional[State] = None
-        self._initial = (
-            initial_state.name if isinstance(initial_state, Enum)
-            else initial_state
-        )
+        self._initial_state: Optional[State] = None
 
         if states:
             self.add_states(states)
-        if self._initial is not None:
-            self.set_state(self._initial)
+        if initial_state is not None:
+            self._initial_state = self.get_state(initial_state)
+            self.set_state(self._initial_state.name)
 
     @property
     def states(self) -> Dict[str, State]:
@@ -164,8 +170,8 @@ class Machine:
         return self._current_state
 
     @property
-    def initial(self) -> Optional[str]:
-        return self._initial
+    def initial_state(self) -> Optional[State]:
+        return self._initial_state
 
     def add_state(
         self,
@@ -181,7 +187,9 @@ class Machine:
             name = state.name if isinstance(state, Enum) else str(state)
             if name in self._states:
                 raise ValueError(f"State '{name}' already registered.")
-            self._states[name] = State(name, on_enter=on_enter, on_exit=on_exit)
+
+            state = state if isinstance(state, Enum) else str(state)
+            self._states[name] = State(state, on_enter=on_enter, on_exit=on_exit)
 
     def add_states(
         self,
@@ -200,7 +208,7 @@ class Machine:
     def get_state(self, name: str | Enum) -> State:
         key = name.name if isinstance(name, Enum) else str(name)
         if key not in self._states:
-            raise ValueError(f"State '{key}' not found in FSM.")
+            raise ValueError(f"State '{key}' not found in machine states.")
         return self._states[key]
 
     def set_state(self, name: str | Enum) -> None:
@@ -210,10 +218,10 @@ class Machine:
         self._change_state(dest, data)
 
     def reset(self) -> None:
-        if self._initial is None:
+        if self._initial_state is None:
             self._current_state = None
             return
-        self.set_state(self._initial)
+        self.set_state(self._initial_state.name)
 
     def add_transition(
         self,
@@ -225,7 +233,14 @@ class Machine:
         before: Optional[Callback | Sequence[Callback]] = None,
         after: Optional[Callback | Sequence[Callback]] = None,
     ) -> None:
-        trigger_name = trigger.name.lower() if isinstance(trigger, Enum) else str(trigger)
+        if isinstance(trigger, IntFlag):
+            mask = trigger.value or 0
+            trigger_name = self._trigger_label(mask, trigger.__class__) if mask else ""
+        else:
+            trigger_name = (
+                trigger.name.lower() if isinstance(trigger, Enum)
+                else str(trigger)
+            )
 
         if sources == self.wildcard_symbol:
             source_names = list(self._states.keys())
@@ -239,7 +254,6 @@ class Machine:
             raise ValueError(f"Unknown destination state '{dest_name}'.")
 
         event = self._ensure_event(trigger_name)
-
         for src in source_names:
             if src != self.wildcard_symbol and src not in self._states:
                 raise ValueError(f"Unknown source state '{src}'.")
@@ -253,13 +267,20 @@ class Machine:
             event.add_transition(transition)
 
     def trigger(self, name: str | Enum, *args: Any, **kwargs: Any) -> bool:
-        event = self._ensure_event(name)
+        if isinstance(name, IntFlag):
+            mask = name.value or 0
+            name = self._trigger_label(mask, name.__class__) if mask else ""
+        else:
+            name = (
+                name.name.lower() if isinstance(name, Enum)
+                else str(name)
+            )
+        if name not in self._events:
+            return False
+        event = self._events[name]
         if event.fire(*args, **kwargs):
             return True
-        raise MachineError(
-            f"Trigger '{event.name}' has no valid transition from state "
-            f"'{self.current_state.name if self.current_state else 'None'}'."
-        )
+        return False
 
     def to_graphviz(self) -> Digraph:
         g = Digraph()
@@ -268,26 +289,31 @@ class Machine:
             g.node(state.name, shape=shape)
 
         for trigger, event in self._events.items():
+            trigger = trigger.replace("_and_", " & ")
             for src, transitions in event._transitions.items():
                 for tr in transitions:
                     g.edge(src, tr.dest, label=trigger)
         return g
 
     def _ensure_event(self, name: str | Enum) -> Event:
-        trigger_name = name.name.lower() if isinstance(name, Enum) else str(name)
+        if isinstance(name, IntFlag):
+            mask = name.value or 0
+            trigger_name = self._trigger_label(mask, name.__class__) if mask else ""
+        else:
+            trigger_name = (
+                name.name.lower() if isinstance(name, Enum)
+                else str(name)
+            )
         if trigger_name not in self._events:
             event = Event(trigger_name, self)
             self._events[trigger_name] = event
 
-            def trigger_method(*args: Any, _event: Event = event, **kwargs: Any) -> bool:
-                if _event.fire(*args, **kwargs):
-                    return True
-                raise MachineError(
-                    f"Trigger '{_event.name}' has no valid transition from state "
-                    f"'{self.current_state.name if self.current_state else 'None'}'."
-                )
-
-            setattr(self, trigger_name, trigger_method)
+            if trigger_name != "":
+                def trigger_method(*args: Any, _event: Event = event, **kwargs: Any) -> bool:
+                    if _event.fire(*args, **kwargs):
+                        return True
+                    return False
+                setattr(self, trigger_name, trigger_method)
         return self._events[trigger_name]
 
     def _change_state(self, dest: State, data: EventData) -> None:
@@ -303,3 +329,13 @@ class Machine:
     def _invoke_callbacks(self, callbacks: Iterable[Callback], data: EventData) -> None:
         for callback in callbacks:
             callback(data)
+
+    def _trigger_label(self, mask: int, trigger_cls) -> str:
+        labels = []
+        if isinstance(trigger_cls, type) and issubclass(trigger_cls, Enum):
+            for bit in trigger_cls:
+                if mask & bit.value:
+                    labels.append(bit.name.lower())
+        if not labels:
+            labels.append(str(mask))
+        return "_and_".join(labels).lower()

@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Dict
 
 from ipycanvas import Canvas, MultiCanvas, hold_canvas
 
+from park.entities.ride import Ride
 from park.entities.robot import Robot
+from park.entities.visitor import Visitor
 from park.internal.math import Rect, Vector2D
 from park.internal.physics import Physics
 from park.internal.sprite import SpriteShape
@@ -16,8 +18,8 @@ from park.stats import Curve
 
 if TYPE_CHECKING:
     from park.entities.core import BaseEntity
-    from park.simulation import Simulation
     from park.logic.node import Node
+    from park.simulation import Simulation
 
 
 @dataclass(frozen=True)
@@ -33,12 +35,14 @@ class Colors:
     robot: str = "#78b7ff"
     visitor: str = "#ff9f9f"
     collider: str = "#f4c542"
+    queue: str = "#2bff004e"
+    charger: str = "#16c542"
 
     ride_progress_bg: str = "#4f5158"
     ride_loading: str = "#16c542"
     ride_unloading: str = "#ff5f5f"
 
-    robot_selection: str = "rgba(22, 197, 66, 0.65)"
+    selection_circle: str = "rgba(22, 197, 66, 0.65)"
     robot_waypoint: str = "rgba(255, 255, 255, 0.35)"
 
 
@@ -108,15 +112,24 @@ class Camera:
 
 
 class Renderer:
-    class RenderLayer(Enum):
+    class TooltipRenderLayer(Enum):
+        BACKGROUND = "background"
+        CONTENT = "content"
+
+    class SimRenderLayer(Enum):
         BACKGROUND = "background"
         GRID = "grid"
         GRID_DEBUG = "grid_debug"
+        QUEUES = "queues"
+        CHARGERS = "chargers"
         RIDES = "rides"
         ROBOTS = "robots"
         VISITORS = "visitors"
         COLLIDERS = "colliders"
-        STATS = "stats"
+
+    class StatRenderLayer(Enum):
+        BACKGROUND = "background"
+        CURVES = "curves"
 
     def __init__(
         self,
@@ -132,18 +145,45 @@ class Renderer:
 
         self.curves: Dict[str, Curve] = {}
 
-        self.mcanvas = MultiCanvas(
-            len(Renderer.RenderLayer),
+        self.sim_canvas: MultiCanvas = MultiCanvas(
+            len(Renderer.SimRenderLayer),
             width=camera.width,
             height=camera.height,
         )
-        self.mcanvas.layout.width = f"{camera.width}px"
-        self.mcanvas.layout.height = f"{camera.height}px"
+        self.sim_canvas.layout.width = f"{camera.width}px"
+        self.sim_canvas.layout.height = f"{camera.height}px"
+        self.sim_canvas.layout.border = "2px solid #444444"
+
+        self._tooltip_width = 200
+        self.tooltip_canvas: MultiCanvas = MultiCanvas(
+            len(Renderer.TooltipRenderLayer),
+            width=self._tooltip_width,
+            height=camera.height
+        )
+        self.tooltip_canvas.layout.width = f"{self._tooltip_width}px"
+        self.tooltip_canvas.layout.height = f"{camera.height}px"
+
+        self._stats_width = 170
+        self.stats_canvas: MultiCanvas = MultiCanvas(
+            len(Renderer.StatRenderLayer),
+            width=self._stats_width,
+            height=camera.height
+        )
+        self.stats_canvas.layout.width = f"{self._stats_width}px"
+        self.stats_canvas.layout.height = f"{camera.height}px"
 
         self._front = {
-            name: self.mcanvas[i]
-            for i, name in enumerate(Renderer.RenderLayer)
+            name: self.sim_canvas[i]
+            for i, name in enumerate(Renderer.SimRenderLayer)
         }
+        self._front.update({
+            name: self.tooltip_canvas[i]
+            for i, name in enumerate(Renderer.TooltipRenderLayer)
+        })
+        self._front.update({
+            name: self.stats_canvas[i]
+            for i, name in enumerate(Renderer.StatRenderLayer)
+        })
         # Disable smoothing for blits/draws
         for layer in self._front.values():
             try:
@@ -156,8 +196,20 @@ class Renderer:
             name: Canvas(
                 width=camera.width,
                 height=camera.height
-            ) for name in Renderer.RenderLayer
+            ) for name in Renderer.SimRenderLayer
         }
+        self._back.update({
+            name: Canvas(
+                width=self._tooltip_width,
+                height=camera.height
+            ) for name in Renderer.TooltipRenderLayer
+        })
+        self._back.update({
+            name: Canvas(
+                width=self._stats_width,
+                height=camera.height
+            ) for name in Renderer.StatRenderLayer
+        })
         for layer in self._back.values():
             try:
                 layer.image_smoothing_enabled = False
@@ -166,17 +218,27 @@ class Renderer:
 
         self._dirty = {
             name: False
-            for name in Renderer.RenderLayer
+            for name in (
+                list(Renderer.SimRenderLayer)
+                + list(Renderer.TooltipRenderLayer)
+                + list(Renderer.StatRenderLayer)
+            )
         }
         self._render_call = {
-            Renderer.RenderLayer.BACKGROUND: self._render_background,
-            Renderer.RenderLayer.GRID: self._render_grid,
-            Renderer.RenderLayer.GRID_DEBUG: self._render_debug_grid,
-            Renderer.RenderLayer.RIDES: self._render_rides,
-            Renderer.RenderLayer.ROBOTS: self._render_robots,
-            Renderer.RenderLayer.VISITORS: self._render_visitors,
-            Renderer.RenderLayer.COLLIDERS: self._render_colliders,
-            Renderer.RenderLayer.STATS: self._render_stats,
+            Renderer.SimRenderLayer.BACKGROUND: self._render_background,
+            Renderer.SimRenderLayer.GRID: self._render_grid,
+            Renderer.SimRenderLayer.GRID_DEBUG: self._render_debug_grid,
+            Renderer.SimRenderLayer.CHARGERS: self._render_chargers,
+            Renderer.SimRenderLayer.RIDES: self._render_rides,
+            Renderer.SimRenderLayer.ROBOTS: self._render_robots,
+            Renderer.SimRenderLayer.VISITORS: self._render_visitors,
+            Renderer.SimRenderLayer.QUEUES: self._render_queues,
+            Renderer.SimRenderLayer.COLLIDERS: self._render_colliders,
+
+            Renderer.TooltipRenderLayer.BACKGROUND: self._render_tooltip_background,
+            Renderer.TooltipRenderLayer.CONTENT: self._render_tooltip_content,
+            Renderer.StatRenderLayer.BACKGROUND: self._render_stats_background,
+            Renderer.StatRenderLayer.CURVES: self._render_stats_curves,
         }
 
         self._last_cam_transform = (
@@ -187,13 +249,22 @@ class Renderer:
 
         self._show_debug_grids = False
         self._debug_grid_force_full = False
+        self._show_queues = False
         self._show_colliders = False
-        self._show_stats = False
+        self._show_stats_curves = False
         self.update_draw(force=True)
 
     @property
-    def widget(self):
-        return self.mcanvas
+    def sim_widget(self):
+        return self.sim_canvas
+
+    @property
+    def tooltip_widget(self):
+        return self.tooltip_canvas
+
+    @property
+    def stats_widget(self):
+        return self.stats_canvas
 
     def mark_all_dirty(self):
         for name in self._dirty:
@@ -215,53 +286,58 @@ class Renderer:
         if enabled != self._show_debug_grids:
             self._show_debug_grids = enabled
             self._debug_grid_force_full = enabled
-            self._dirty[Renderer.RenderLayer.GRID_DEBUG] = True
+            self._dirty[Renderer.SimRenderLayer.GRID_DEBUG] = True
+
+    def set_queues_visible(self, enabled: bool):
+        if enabled != self._show_queues:
+            self._show_queues = enabled
+            self._dirty[Renderer.SimRenderLayer.QUEUES] = True
 
     def set_colliders_visible(self, enabled: bool):
         if enabled != self._show_colliders:
             self._show_colliders = enabled
-            self._dirty[Renderer.RenderLayer.COLLIDERS] = True
+            self._dirty[Renderer.SimRenderLayer.COLLIDERS] = True
 
-    def set_stats_visible(self, enabled: bool):
-        if enabled != self._show_stats:
-            self._show_stats = enabled
-            self._dirty[Renderer.RenderLayer.STATS] = True
+    def set_stats_curves_visible(self, enabled: bool):
+        if enabled != self._show_stats_curves:
+            self._show_stats_curves = enabled
+            self._dirty[Renderer.StatRenderLayer.CURVES] = True
 
     def add_curve(self, curve: Curve):
         if curve.name in self.curves:
             raise ValueError(f"Curve with name '{curve.name}' already exists")
         self.curves[curve.name] = curve
         idx = len(self.curves) - 1
-        curve.set_rect(self.get_curve_rect(idx))
-        self._dirty[Renderer.RenderLayer.STATS] = True
+        curve.set_rect(self._get_curve_rect(idx))
+        self._dirty[Renderer.StatRenderLayer.CURVES] = True
 
     def update_curve(self, name: str, value: float):
         if not name in self.curves:
             return
         self.curves[name].append(value)
-        self._dirty[Renderer.RenderLayer.STATS] = True
+        self._dirty[Renderer.StatRenderLayer.CURVES] = True
 
     def clear_curves(self):
         for curve in self.curves.values():
             curve.clear()
-        self._dirty[Renderer.RenderLayer.STATS] = True
+        self._dirty[Renderer.StatRenderLayer.CURVES] = True
 
     def resize(self, width: int, height: int):
         # resize layers and camera
-        self.mcanvas.width = width
-        self.mcanvas.height = height
+        self.sim_canvas.width = width
+        self.sim_canvas.height = height
         self._back = {
             name: Canvas(
                 width=width,
                 height=height
-            ) for name in Renderer.RenderLayer
+            ) for name in Renderer.SimRenderLayer
         }
 
         self.cam.width = width
         self.cam.height = height
         for idx, curve in enumerate(self.curves.values()):
-            curve.set_rect(self.get_curve_rect(idx))
-            self._dirty[Renderer.RenderLayer.STATS] = True
+            curve.set_rect(self._get_curve_rect(idx))
+            self._dirty[Renderer.StatRenderLayer.CURVES] = True
 
         self.mark_all_dirty()
 
@@ -303,17 +379,40 @@ class Renderer:
 
     def select_at_point(self, point: Vector2D, clear: bool):
         world_point = self.screen_to_world(point)
-
         if clear:
-            for robot in Robot.get_debug_path_robots():
-                robot.set_debug_path(False)
+            for robot in Robot.get_tooltip_robots():
+                robot.set_tooltip_visible(False)
+            for visitor in Visitor.get_tooltip_visitors():
+                visitor.set_tooltip_visible(False)
+            for ride in Ride.get_tooltip_rides():
+                ride.set_tooltip_visible(False)
 
         for robot in self.sim.robots:
+            if not robot.sprite.enabled and not robot.collider.enabled:
+                continue
             if (
                 robot.bounds is not None
                 and robot.bounds.contains(world_point)
             ):
-                robot.set_debug_path(True)
+                robot.set_tooltip_visible(True)
+                return
+        for visitor in self.sim.visitors:
+            if not visitor.sprite.enabled and not visitor.collider.enabled:
+                continue
+            if (
+                visitor.bounds is not None
+                and visitor.bounds.contains(world_point)
+            ):
+                visitor.set_tooltip_visible(True)
+                return
+        for ride in self.sim.rides:
+            if not ride.sprite.enabled and not ride.collider.enabled:
+                continue
+            if (
+                ride.bounds is not None
+                and ride.bounds.contains(world_point)
+            ):
+                ride.set_tooltip_visible(True)
                 return
 
     def update_draw(self, force: bool = False):
@@ -324,13 +423,14 @@ class Renderer:
         )
         if force or cam_transform != self._last_cam_transform:
             self._last_cam_transform = cam_transform
-            self._dirty[Renderer.RenderLayer.GRID] = True
+            self._dirty[Renderer.SimRenderLayer.GRID] = True
+            self._dirty[Renderer.SimRenderLayer.CHARGERS] = True
             if self._show_debug_grids:
                 self._debug_grid_force_full = True
 
-        self._dirty[Renderer.RenderLayer.RIDES] = True
-        self._dirty[Renderer.RenderLayer.ROBOTS] = True
-        self._dirty[Renderer.RenderLayer.VISITORS] = True
+        self._dirty[Renderer.SimRenderLayer.RIDES] = True
+        self._dirty[Renderer.SimRenderLayer.ROBOTS] = True
+        self._dirty[Renderer.SimRenderLayer.VISITORS] = True        
 
         if self._show_debug_grids:
             need_debug = self._debug_grid_force_full
@@ -340,10 +440,12 @@ class Renderer:
                         need_debug = True
                         break
             if need_debug:
-                self._dirty[Renderer.RenderLayer.GRID_DEBUG] = True
+                self._dirty[Renderer.SimRenderLayer.GRID_DEBUG] = True
 
         if self._show_colliders:
-            self._dirty[Renderer.RenderLayer.COLLIDERS] = True
+            self._dirty[Renderer.SimRenderLayer.COLLIDERS] = True
+
+        self._dirty[Renderer.TooltipRenderLayer.CONTENT] = True
 
         for layer in self._dirty:
             if force or self._dirty[layer]:
@@ -362,13 +464,13 @@ class Renderer:
             canvas.fill_rect(
                 0,
                 0,
-                self.cam.width,
-                self.cam.height
+                canvas.width,
+                canvas.height,
             )
 
     def _blit(self, name: str):
-        front = self._front[name]
-        back = self._back[name]
+        front: Canvas = self._front[name]
+        back: Canvas = self._back[name]
         with hold_canvas(front):  # keep clear/draw atomic to prevent flicker
             front.clear()
             try:
@@ -538,17 +640,17 @@ class Renderer:
                 )
 
                 canvas.stroke_style = Colors.major_grid
-                canvas.line_width = 2
+                canvas.line_width = 4
 
                 canvas.begin_path()
-                x = first_major_x
+                x = first_major_x + pixel_scale * grouping
                 while x <= cam.x + vw:
                     sx = (x - cam.x) * cam.zoom + 0.5
                     canvas.move_to(sx, 0)
                     canvas.line_to(sx, cam.height)
                     x += pixel_scale * grouping
 
-                y = first_major_y
+                y = first_major_y + pixel_scale * grouping
                 while y <= cam.y + vh:
                     sy = (y - cam.y) * cam.zoom + 0.5
                     canvas.move_to(0, sy)
@@ -624,6 +726,12 @@ class Renderer:
                     canvas.fill_rect(screen_pos.x, screen_pos.y, width, height)
                     canvas.stroke_rect(screen_pos.x, screen_pos.y, width, height)
 
+    def _render_chargers(self, canvas: Canvas):
+        self._clear(canvas, None)
+        with hold_canvas(canvas):
+            for charger in self.sim.chargers:
+                self._draw_sprite(canvas, charger)
+
     def _render_rides(self, canvas: Canvas):
         self._clear(canvas, None)
         with hold_canvas(canvas):
@@ -631,6 +739,17 @@ class Renderer:
                 drawn = self._draw_sprite(canvas, ride)
                 if not drawn:
                     continue
+
+                if ride.tooltip_visible:
+                    # draw selection circle
+                    center = self.world_to_screen(ride.transform.position)
+                    radius = (max(ride.sprite.size.x, ride.sprite.size.y) * self.cam.zoom)
+                    self._draw_selection_circle(
+                        canvas,
+                        center,
+                        radius,
+                        Colors.selection_circle
+                    )
 
                 sprite = ride.sprite
                 center = self.world_to_screen(ride.transform.position)
@@ -698,17 +817,16 @@ class Renderer:
             for robot in self.sim.robots:
                 self._draw_sprite(canvas, robot)
 
-                if robot.debug_path:
+                if robot.tooltip_visible:
                     # draw selection circle
                     center = self.world_to_screen(robot.transform.position)
                     radius = (max(robot.sprite.size.x, robot.sprite.size.y) * self.cam.zoom)
-                    if radius > 0:
-                        canvas.stroke_style = Colors.robot_selection
-                        canvas.line_width = max(2.0, 0.15 * radius)
-                        canvas.begin_path()
-                        canvas.move_to(center.x + radius, center.y)
-                        canvas.arc(center.x, center.y, radius, 0, 2 * math.pi)
-                        canvas.stroke()
+                    self._draw_selection_circle(
+                        canvas,
+                        center,
+                        radius,
+                        Colors.selection_circle
+                    )
 
                     if robot.current_plan is not None:
                         # draw waypoints as little hollow dots with a line to each
@@ -733,6 +851,53 @@ class Renderer:
         with hold_canvas(canvas):
             for visitor in self.sim.visitors:
                 self._draw_sprite(canvas, visitor)
+
+                if visitor.tooltip_visible:
+                    # draw selection circle
+                    center = self.world_to_screen(visitor.transform.position)
+                    radius = (max(visitor.sprite.size.x, visitor.sprite.size.y) * self.cam.zoom)
+                    self._draw_selection_circle(
+                        canvas,
+                        center,
+                        radius,
+                        Colors.selection_circle
+                    )
+
+    def _render_queues(self, canvas: Canvas):
+        self._clear(canvas, None)
+        if not self._show_queues:
+            return
+
+        queues = [self.sim.entrance_queue, self.sim.exit_queue]
+        for ride in self.sim.rides:
+            queues.append(ride.entrance_queue)
+            queues.append(ride.exit_queue)
+        for charger in self.sim.chargers:
+            queues.append(charger.charge_queue)
+        with hold_canvas(canvas):
+            for queue in queues:
+                # draw a rectangle from the queue's tail to its head, like a carpet
+                if queue.head is None or queue.tail is None:
+                    continue
+                head = self.world_to_screen(queue.head)
+                tail = self.world_to_screen(queue.tail)
+                width = abs(head.x - tail.x)
+                height = abs(head.y - tail.y)
+                if width == 0:
+                    width = max(2.0, 16.0 * self.cam.zoom)
+                    head.x -= width / 2.0
+                    tail.x -= width / 2.0
+                if height == 0:
+                    height = max(2.0, 16.0 * self.cam.zoom)
+                    head.y -= height / 2.0
+                    tail.y -= height / 2.0
+                canvas.fill_style = Colors.queue
+                canvas.fill_rect(
+                    min(head.x, tail.x),
+                    min(head.y, tail.y),
+                    width,
+                    height,
+                )
 
     def _render_colliders(self, canvas: Canvas):
         self._clear(canvas, None)
@@ -760,24 +925,105 @@ class Renderer:
                     rect.height * zoom,
                 )
 
-    def _render_stats(self, canvas: Canvas):
-        if not self._dirty[Renderer.RenderLayer.STATS]:
+    def _render_tooltip_background(self, canvas: Canvas):
+        self._clear(canvas, Colors.background)
+
+    def _render_tooltip_content(self, canvas: Canvas):
+        self._clear(canvas, None)
+        selected_robot = next((r for r in self.sim.robots if r.tooltip_visible), None)
+        selected_visitor = next((v for v in self.sim.visitors if v.tooltip_visible), None)
+        selected_ride = next((rd for rd in self.sim.rides if rd.tooltip_visible), None)
+        if (
+            selected_robot is None
+            and selected_visitor is None
+            and selected_ride is None
+        ):
+            return
+
+        with hold_canvas(canvas):
+            if selected_robot is not None:
+                lines = [
+                    f"Robot #{str(selected_robot.id)[:8]}",
+                    f"State: {selected_robot.state.value}",
+                    f"Ride: {selected_robot.target_ride.name if selected_robot.target_ride else '--'}",
+                    f"Health: {selected_robot.health_percentage:.2f}%",
+                    f"Battery: {selected_robot.battery_percentage:.2f}%",
+                ]
+            elif selected_visitor is not None:
+                lines = [
+                    f"Visitor #{str(selected_visitor.id)[:8]}",
+                    f"State: {selected_visitor.state.value}",
+                    f"Ride: {selected_visitor.assigned_ride.name if selected_visitor.assigned_ride else '--'}",
+                    f"Satisfaction: {selected_visitor.satisfaction:.2f}",
+                    # f"Queue Time: {selected_visitor.time_in_queues}",
+                    # f"Ride Time: {selected_visitor.time_in_rides}",
+                    # f"Queue: {selected_visitor.queue_ref.name if selected_visitor.queue_ref else '--'}",
+                ]
+            elif selected_ride is not None:
+                lines = [
+                    f"Ride: {selected_ride.name}",
+                    # f"Operation State: {selected_ride.operational_state.value}",
+                    f"Run State: {selected_ride.run_state.value}",
+                    f"Ticket Price: ${selected_ride.entry_price:.2f}",
+                    f"Riders: {selected_ride.riders.member_count}/{selected_ride.capacity}",
+                    # f"Timer: {selected_ride.timer}/{selected_ride.duration}",
+                    # f"Entrance: {selected_ride.entrance_queue.name}",
+                    # f"Exit: {selected_ride.exit_queue.name}",
+                ]
+
+            pad = 10.0
+            box_width = canvas.width - pad * 2.0
+            box_height = len(lines) * 18.0 + 24.0
+            box_x = pad
+            box_y = pad
+
+            canvas.fill_style = "rgba(28, 29, 36, 0.92)"
+            canvas.fill_rect(box_x, box_y, box_width, box_height)
+
+            canvas.stroke_style = Colors.label
+            canvas.line_width = 1.0
+            canvas.stroke_rect(box_x, box_y, box_width, box_height)
+
+            canvas.fill_style = Colors.label
+            canvas.font = "13px monospace"
+            canvas.text_align = "left"
+            line_height = 18.0
+            text_y = box_y + 24.0
+            for line in lines:
+                canvas.fill_text(line, box_x + 12.0, text_y)
+                text_y += line_height
+
+    def _render_stats_background(self, canvas: Canvas):
+        self._clear(canvas, Colors.background)
+
+    def _render_stats_curves(self, canvas: Canvas):
+        if not self._dirty[Renderer.StatRenderLayer.CURVES]:
             return
 
         canvas.clear()
-        if not self._show_stats:
+        if not self._show_stats_curves:
             return
 
         for idx, curve in enumerate(self.curves.values()):
-            curve.set_rect(self.get_curve_rect(idx))
+            curve.set_rect(self._get_curve_rect(idx))
             curve.render(canvas)
 
-    def get_curve_rect(self, idx: int) -> Rect:
-        width = 130
+    def _get_curve_rect(self, idx: int) -> Rect:
+        width = 150
         height = 100
-        top = 14.0
+        top = 10.0
         gap = 10.0
 
-        current_x = self.cam.width - width - gap
+        current_x = self._stats_width - width - gap
         current_y = top + (height + gap) * idx
         return Rect(current_x, current_y, width, height)
+
+    def _draw_selection_circle(self, canvas: Canvas, center: Vector2D, radius: float, color: str):
+        if radius <= 0:
+            return
+        canvas.stroke_style = color
+        canvas.line_width = max(2.0, 0.15 * radius)
+        canvas.begin_path()
+        canvas.move_to(center.x + radius, center.y)
+        canvas.arc(center.x, center.y, radius, 0, 2 * math.pi)
+        canvas.stroke()
