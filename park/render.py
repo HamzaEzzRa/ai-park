@@ -955,6 +955,7 @@ class Renderer:
                     f"State: {selected_visitor.state.value}",
                     f"Ride: {selected_visitor.assigned_ride.name if selected_visitor.assigned_ride else '--'}",
                     f"Satisfaction: {selected_visitor.satisfaction:.2f}",
+                    f"Completed Rides: {selected_visitor.completed_rides}/{selected_visitor.desired_rides}",
                     # f"Queue Time: {selected_visitor.time_in_queues}",
                     # f"Ride Time: {selected_visitor.time_in_rides}",
                     # f"Queue: {selected_visitor.queue_ref.name if selected_visitor.queue_ref else '--'}",

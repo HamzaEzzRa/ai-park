@@ -465,7 +465,10 @@ class Robot(BaseEntity):
             self.rigidbody.set_static(False)
 
         self.transform.set_position(self.random_world_position())
-        if self.target_visitor is not None:
+        if (
+            self.state.value == Robot.State.PICK_RIDE.value
+            and self.target_visitor is not None
+        ):
             self.simulation.remove_visitor(self.target_visitor)
             self.target_visitor.delete()
             self.target_visitor = None
