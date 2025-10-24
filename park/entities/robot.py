@@ -11,6 +11,8 @@ from ai.pathfinding.bfs import BreadthFirstStrategy
 from ai.pathfinding.core import MovementPlan, MovementState, MovementStrategy
 from ai.pathfinding.dfs import DepthFirstStrategy
 from ai.pathfinding.linear import LinearStrategy
+from homework.costs import get_ride_cost, get_visitor_cost
+from homework.fsm import RobotState, RobotTrigger, get_robot_fsm
 from park.entities.core import BaseEntity
 from park.entities.ride import Ride
 from park.entities.visitor import Visitor
@@ -24,18 +26,8 @@ if TYPE_CHECKING:
 
 
 class Robot(BaseEntity):
-    class State(Enum):
-        ROAMING = "roaming"
-        PICK_VISITOR = "pick_visitor"
-        PICK_RIDE = "pick_ride"
-        CHARGING = "charging"
-
-    class Trigger(IntFlag):
-        VISITOR_IN_QUEUE = 1 << 1
-        VISITOR_ON_BOARD = 1 << 2
-        VISITOR_DROP_OFF = 1 << 3
-        LOW_BATTERY = 1 << 4
-        FULL_BATTERY = 1 << 5
+    State = RobotState
+    Trigger = RobotTrigger
 
     _tooltip_robots: set["Robot"] = set()
 
@@ -58,11 +50,10 @@ class Robot(BaseEntity):
 
         self.move_speed = move_speed * 60
 
-        self.state_machine = Machine(
-            states=Robot.State,
-            initial_state=Robot.State.ROAMING
-        )
-        self._setup_state_transitions()
+        self.state_machine = get_robot_fsm()
+        if not self.state_machine.states:
+            self.state_machine.add_state(Robot.State.ROAMING)
+            self.state_machine.set_state(Robot.State.ROAMING)
 
         self.attached_charger: Optional[Charger] = None
         self.target_charger: Optional[Charger] = None
@@ -383,46 +374,6 @@ class Robot(BaseEntity):
         if (self._current_step - self._last_failure_step) >= self._failure_cooldown:
             self._last_failure_step = self._current_step
 
-    def _setup_state_transitions(self):
-        self.state_machine.add_transition(
-            sources=Robot.State.ROAMING,
-            dest=Robot.State.PICK_VISITOR,
-            trigger=Robot.Trigger.VISITOR_IN_QUEUE
-        )
-        self.state_machine.add_transition(
-            sources=Robot.State.PICK_VISITOR,
-            dest=Robot.State.PICK_RIDE,
-            trigger=Robot.Trigger.VISITOR_ON_BOARD
-        )
-        self.state_machine.add_transition(
-            sources=Robot.State.PICK_RIDE,
-            dest=Robot.State.ROAMING,
-            trigger=Robot.Trigger.VISITOR_DROP_OFF
-        )
-
-        self.state_machine.add_transition(
-            sources=[
-                Robot.State.ROAMING,
-                Robot.State.PICK_VISITOR,
-                Robot.State.PICK_RIDE
-            ],
-            dest=Robot.State.CHARGING,
-            trigger=Robot.Trigger.LOW_BATTERY
-        )
-        self.state_machine.add_transition(
-            sources=Robot.State.CHARGING,
-            dest=Robot.State.ROAMING,
-            trigger=Robot.Trigger.FULL_BATTERY
-        )
-        self.state_machine.add_transition(
-            sources=Robot.State.CHARGING,
-            dest=Robot.State.PICK_RIDE,
-            trigger=(
-                Robot.Trigger.FULL_BATTERY
-                | Robot.Trigger.VISITOR_ON_BOARD
-            )
-        )
-
     def _is_waypoint_ok(self, waypoint: Vector2D) -> bool:
         node = self.simulation.world.grid.world_to_node(waypoint)
         if node is None:
@@ -474,6 +425,8 @@ class Robot(BaseEntity):
             self.target_visitor = None
         self._release_targets()
         self.state_machine.reset()
+        if self.state is None:
+            self.state_machine.set_state(Robot.State.ROAMING)
 
     def _roam(self):
         if self._current_plan is None:
@@ -505,16 +458,6 @@ class Robot(BaseEntity):
             other_half = other.collider.half_extents
         return max(robot_half.x, robot_half.y) + max(other_half.x, other_half.y) + 8.0
 
-    def _get_visitor_score(self, visitor: Visitor) -> float:
-        distance = (visitor.transform.position - self.transform.position).magnitude()
-        score = distance
-        return score
-
-    def _get_ride_score(self, ride: Ride) -> float:
-        distance = (ride.entrance_queue.tail - self.transform.position).magnitude()
-        score = distance
-        return score
-
     def _get_charger_score(self, charger: Charger) -> float:
         distance = (charger.charge_queue.tail - self.transform.position).magnitude()
         score = distance
@@ -534,7 +477,7 @@ class Robot(BaseEntity):
                 visitor.state != Visitor.State.IN_QUEUE
                 or visitor.assigned_robot not in (None, self)
             ): continue
-            score = self._get_visitor_score(visitor)
+            score = get_visitor_cost(self, visitor)
             if score < best_score:
                 best_score = score
                 best_visitor = visitor
@@ -584,7 +527,7 @@ class Robot(BaseEntity):
                 ride in exclude_list
                 or (self.target_visitor and not ride.can_accept(self.target_visitor))
             ): continue
-            score = self._get_ride_score(ride)
+            score = get_ride_cost(self, ride, self.target_visitor)
             if score < best_score:
                 best_score = score
                 best_ride = ride

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List
 
 from ai.pathfinding.core import MovementStrategy
+from homework.path import astar_g_cost, astar_h_cost
 
 if TYPE_CHECKING:
     from park.logic.grid import Grid2D
@@ -38,7 +39,7 @@ class AStarStrategy(MovementStrategy):
         came_from: dict[Node, Node] = {}
         g_costs: dict[Node, float] = {start_node: 0.0}
         f_costs: dict[Node, float] = {
-            start_node: start_node.center.distance_from(end_node.center)
+            start_node: astar_g_cost(start_node.center, end_node.center)
         }
 
         while open_set:
@@ -64,7 +65,7 @@ class AStarStrategy(MovementStrategy):
 
                 tentative_g_cost = (
                     g_costs[current]
-                    + current.center.distance_from(neighbor.center)
+                    + astar_g_cost(current.center, neighbor.center)
                 )
                 if neighbor not in open_set:
                     open_set.append(neighbor)
@@ -75,7 +76,7 @@ class AStarStrategy(MovementStrategy):
                 g_costs[neighbor] = tentative_g_cost
                 f_costs[neighbor] = (
                     g_costs[neighbor]
-                    + neighbor.center.distance_from(end_node.center)
+                    + astar_h_cost(neighbor.center, end_node.center)
                 )
 
         return []
