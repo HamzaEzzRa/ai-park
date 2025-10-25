@@ -3,8 +3,8 @@ from __future__ import annotations
 from enum import Enum, IntFlag
 from typing import TYPE_CHECKING, List, Optional
 
-import PIL
 import numpy as np
+import PIL
 
 from ai.fsm.core import Machine
 from ai.pathfinding.astar import AStarStrategy
@@ -12,7 +12,7 @@ from ai.pathfinding.bfs import BreadthFirstStrategy
 from ai.pathfinding.core import MovementPlan, MovementState, MovementStrategy
 from ai.pathfinding.dfs import DepthFirstStrategy
 from ai.pathfinding.linear import LinearStrategy
-from ai.recognition.core import get_recognition_model
+from ai.recognition.core import PredictionType, get_recognition_model
 from homework.costs import get_ride_cost, get_visitor_cost
 from homework.fsm import RobotState, RobotTrigger, get_robot_fsm
 from park.entities.core import BaseEntity
@@ -114,6 +114,7 @@ class Robot(BaseEntity):
         self._target_position: Vector2D | None = None
         self._current_plan: MovementPlan | None = None
 
+        self._prediction_type = PredictionType.RANDOM
         self._recognition_model = get_recognition_model()
 
         self._tooltip_visible = False
@@ -200,6 +201,9 @@ class Robot(BaseEntity):
                 self.state_machine.trigger(Robot.Trigger.FULL_BATTERY)
         if self.attached_charger is not None:
             self.attached_charger = None
+
+    def set_prediction_type(self, prediction_type: PredictionType):
+        self._prediction_type = prediction_type
 
     def set_movement_strategy(self, strategy: MovementStrategy.Type):
         if strategy == MovementStrategy.Type.LINEAR:
@@ -395,7 +399,7 @@ class Robot(BaseEntity):
             self._last_failure_step = self._current_step
 
     def _predict_group_size(self, visitor: Visitor) -> int:
-        if self._recognition_model is None:
+        if self._prediction_type == PredictionType.RANDOM:
             predicted_size = self.rng.integers(
                 1, self.simulation.max_visitor_group_size + 1
             )
@@ -414,7 +418,7 @@ class Robot(BaseEntity):
             return size_class + 1  # Convert back to 1-indexed
 
     def _predict_group_type(self, visitor: Visitor) -> Visitor.GroupType:
-        if self._recognition_model is None:
+        if self._prediction_type == PredictionType.RANDOM:
             predicted_type = self.rng.choice(list(Visitor.GroupType))
             return predicted_type
         else:

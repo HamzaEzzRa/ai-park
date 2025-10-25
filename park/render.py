@@ -18,6 +18,8 @@ from park.internal.sprite import SpriteShape
 from park.logic.grid import Grid2D
 from park.stats import Curve
 
+from homework.fsm import RobotState
+
 if TYPE_CHECKING:
     from park.entities.core import BaseEntity
     from park.internal.sprite import Sprite
@@ -1042,11 +1044,14 @@ class Renderer:
                     f"State: {selected_robot.state.value}",
                     f"Ride: {selected_robot.target_ride.name if selected_robot.target_ride else '--'}",
                     f"Health: {selected_robot.health_percentage:.2f}%",
-                    f"Battery: {selected_robot.battery_percentage:.2f}%",
-                    f"Predicted Type:",
-                    f"\t{selected_robot.predicted_group_type.name.lower() if selected_robot.predicted_group_type else '--'}",
-                    f"Predicted Size: {selected_robot.predicted_group_size if selected_robot.predicted_group_size else '--'}",
+                    f"Battery: {selected_robot.battery_percentage:.2f}%"
                 ]
+                if selected_robot.state.value != RobotState.ROAMING:
+                    lines += [
+                        f"Predicted Type:",
+                        f"\t{selected_robot.predicted_group_type.name.lower() if selected_robot.predicted_group_type else '--'}",
+                        f"Predicted Size: {selected_robot.predicted_group_size if selected_robot.predicted_group_size else '--'}",
+                    ]
             elif selected_visitor is not None:
                 lines = [
                     f"Visitor #{str(selected_visitor.id)[:8]}",

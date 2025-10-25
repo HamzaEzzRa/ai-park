@@ -1,9 +1,17 @@
+from enum import Enum
 from typing import Optional, Tuple
 
 import keras
 from keras import layers
 
+from homework.recognition import get_hidden_layers
+
 recognition_model: Optional[keras.Model] = None
+
+
+class PredictionType(Enum):
+    RANDOM = "random"
+    WITH_NN = "with_nn"
 
 
 def get_recognition_model(
@@ -17,11 +25,8 @@ def get_recognition_model(
 
     inputs = keras.Input(shape=input_shape, name="visitor_sprite")
 
-    x = layers.Rescaling(1.0 / 255.0, name="scale_0_1")(inputs)
-    x = layers.Conv2D(32, kernel_size=3, padding="same", activation="relu")(x)
-    x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(64, activation="relu")(x)
-    x = layers.Dropout(0.2)(x)
+    x = get_hidden_layers(inputs)
+    x = layers.Flatten()(x)
 
     group_type_output = layers.Dense(
         num_group_types,

@@ -24,7 +24,6 @@ def get_ride_cost(robot: Robot, ride: Ride, picked_visitor: Visitor) -> float:
     - Le niveau de batterie du robot: `robot.battery_percentage` (entre 0 et 100)
     - La taux de décharge de la batterie par unité de temps: `robot.battery_drain_rate`
 
-    - La taille du groupe de visiteurs: `picked_visitor.group_size`
     - La satisfaction actuelle des visiteurs: `picked_visitor.satisfaction` (entre 0 et 1)
     - Le nombre d'attractions qu'ils souhaitent visiter au total: `picked_visitor.desired_rides`
     - Le nombre d'attractions visitées: `picked_visitor.completed_rides`
@@ -42,6 +41,13 @@ def get_ride_cost(robot: Robot, ride: Ride, picked_visitor: Visitor) -> float:
     - La capacité de l'attraction: `ride.capacity`
     - La temps que prend l'attraction pour faire un cycle: `ride.duration`
     - Le prix d'entrée de l'attraction, par personne: `ride.entry_price`
+
+    Note importante:
+        - Si vous avez déjà implémenté le modèle de reconnaissance des visiteurs, on vous demande d'utiliser
+        `robot.predicted_group_type` et `robot.predicted_group_size` pour accéder à la taille et au type du groupe de visiteurs.
+
+        - Si le modèle de reconnaissance n'est pas implémenté, on vous autorise à utiliser
+        `picked_visitor.group_type` et `picked_visitor.group_size` à la place.
     """
     # Distance entre le robot et le début de la file d'attente de l'attraction
     distance = robot.transform.position.distance_from(ride.entrance_queue.tail)
@@ -68,6 +74,7 @@ def get_visitor_cost(robot: Robot, visitor: Visitor) -> float:
     - La taux de décharge de la batterie par unité de temps: `robot.battery_drain_rate`
 
     - La taille du groupe de visiteurs: `visitor.group_size`
+    - Le type du groupe de visiteurs: `visitor.group_type`
     - La satisfaction actuelle des visiteurs: `visitor.satisfaction` (entre 0 et 1)
     - Le nombre d'attractions visitées: `visitor.completed_rides`
     - Le nombre d'attractions qu'ils souhaitent visiter au total: `visitor.desired_rides`
