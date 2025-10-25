@@ -4,6 +4,8 @@ import math
 from enum import Enum
 from typing import TYPE_CHECKING, List, Optional
 
+import numpy as np
+
 from park.entities.core import BaseEntity
 from park.internal.math import Vector2D
 
@@ -15,6 +17,14 @@ if TYPE_CHECKING:
 
 
 class Visitor(BaseEntity):
+    class MemberType(Enum):
+        ADULT = "adult"
+        CHILD = "child"
+
+    class GroupType(Enum):
+        ALL_ADULTS = 0
+        WITH_CHILDREN = 1
+
     class State(Enum):
         QUEUEING = "queuing"
         IN_QUEUE = "in_queue"
@@ -32,13 +42,30 @@ class Visitor(BaseEntity):
         group_size: int,
         move_speed: float,
         desired_rides: int,
-        member_spacing: float
+        member_spacing: float,
+        rng: Optional[np.random.Generator] = None,
     ):
         super().__init__(simulation, position)
+        if rng is None:
+            rng = np.random.default_rng()
+        self.rng = rng
+
         self.group_size = group_size
         self.move_speed = move_speed
         self.desired_rides = desired_rides
+
+        # At least one adult, rest can be adults or children
+        self.members: List[Visitor.MemberType] = (
+            [Visitor.MemberType.ADULT]  
+            + self.rng.choice(
+                list(Visitor.MemberType),
+                size=group_size - 1,
+                replace=True
+            ).tolist()
+        )
         self.member_spacing = member_spacing
+
+        self.group_type = self._get_group_type()
 
         self.state = Visitor.State.QUEUEING
         self.completed_rides = 0
@@ -168,3 +195,9 @@ class Visitor(BaseEntity):
             self.satisfaction = max(0.0, min(1.0, self.satisfaction))
             self.simulation.remove_visitor(self)
             self.delete()
+
+    def _get_group_type(self) -> Visitor.GroupType:
+        if all(member == Visitor.MemberType.ADULT for member in self.members):
+            return Visitor.GroupType.ALL_ADULTS
+        else:
+            return Visitor.GroupType.WITH_CHILDREN

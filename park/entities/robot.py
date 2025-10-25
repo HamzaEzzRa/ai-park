@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import Enum, IntFlag
 from typing import TYPE_CHECKING, List, Optional
 
+import PIL
 import numpy as np
 
 from ai.fsm.core import Machine
@@ -11,6 +12,7 @@ from ai.pathfinding.bfs import BreadthFirstStrategy
 from ai.pathfinding.core import MovementPlan, MovementState, MovementStrategy
 from ai.pathfinding.dfs import DepthFirstStrategy
 from ai.pathfinding.linear import LinearStrategy
+from ai.recognition.core import get_recognition_model
 from park.entities.core import BaseEntity
 from park.entities.ride import Ride
 from park.entities.visitor import Visitor
@@ -67,7 +69,10 @@ class Robot(BaseEntity):
         self.attached_charger: Optional[Charger] = None
         self.target_charger: Optional[Charger] = None
         self.target_ride: Optional[Ride] = None
+
         self.target_visitor: Optional[Visitor] = None
+        self.predicted_group_type: Optional[Visitor.GroupType] = None
+        self.predicted_group_size: Optional[int] = None
 
         self._max_health = max_health
         self._max_battery = max_battery
@@ -117,6 +122,8 @@ class Robot(BaseEntity):
 
         self._target_position: Vector2D | None = None
         self._current_plan: MovementPlan | None = None
+
+        self._recognition_model = get_recognition_model()
 
         self._tooltip_visible = False
 
@@ -265,6 +272,17 @@ class Robot(BaseEntity):
         self._target_position = None
         self._current_plan = None
 
+    def set_target_visitor(self, visitor: Optional[Visitor]):
+        if visitor is None:
+            self.target_visitor = None
+            self.predicted_group_size = None
+            self.predicted_group_type = None
+            return
+
+        self.target_visitor = visitor
+        self.predicted_group_size = self._predict_group_size(visitor)
+        self.predicted_group_type = self._predict_group_type(visitor)
+
     def random_world_position(self) -> Vector2D:
         world = self.simulation.world
         half_extents = self._half_extents()
@@ -290,6 +308,8 @@ class Robot(BaseEntity):
         ):
             self._battery_level -= self.battery_drain_rate
             if self.battery_percentage <= self._low_battery_threshold * 100.0:
+                if self.state.value == Robot.State.PICK_VISITOR.value:
+                    self._release_targets()
                 self.state_machine.trigger(Robot.Trigger.LOW_BATTERY)
             if self._battery_level <= 0:
                 self._respawn()
@@ -423,6 +443,42 @@ class Robot(BaseEntity):
             )
         )
 
+    def _predict_group_size(self, visitor: Visitor) -> int:
+        if self._recognition_model is None:
+            predicted_size = self.rng.integers(
+                1, self.simulation.max_visitor_group_size + 1
+            )
+            return predicted_size
+        else:
+            # Prepare visitor sprite for prediction
+            pil_img = visitor.sprite.primitive_canvas_to_image()
+            input_h, input_w = self._recognition_model.inputs[0].shape[1:3]
+            if input_h and input_w:  # both ints
+                pil_img = pil_img.resize((input_w, input_h), resample=PIL.Image.BILINEAR)
+
+            arr = np.array(pil_img, dtype=np.uint8)
+            arr = np.expand_dims(arr, axis=0)
+            pred = self._recognition_model.predict(arr, verbose=0)
+            size_class = np.argmax(pred["group_size"][0])
+            return size_class + 1  # Convert back to 1-indexed
+
+    def _predict_group_type(self, visitor: Visitor) -> Visitor.GroupType:
+        if self._recognition_model is None:
+            predicted_type = self.rng.choice(list(Visitor.GroupType))
+            return predicted_type
+        else:
+            # Prepare visitor sprite for prediction
+            pil_img = visitor.sprite.primitive_canvas_to_image()
+            input_h, input_w = self._recognition_model.inputs[0].shape[1:3]
+            if input_h and input_w:  # both ints
+                pil_img = pil_img.resize((input_w, input_h), resample=PIL.Image.BILINEAR)
+
+            arr = np.array(pil_img, dtype=np.uint8)
+            arr = np.expand_dims(arr, axis=0)
+            pred = self._recognition_model.predict(arr, verbose=0)
+            group_type_idx = np.argmax(pred["group_type"][0])
+            return Visitor.GroupType(group_type_idx)
+
     def _is_waypoint_ok(self, waypoint: Vector2D) -> bool:
         node = self.simulation.world.grid.world_to_node(waypoint)
         if node is None:
@@ -471,7 +527,7 @@ class Robot(BaseEntity):
         ):
             self.simulation.remove_visitor(self.target_visitor)
             self.target_visitor.delete()
-            self.target_visitor = None
+            self.set_target_visitor(None)
         self._release_targets()
         self.state_machine.reset()
 
@@ -540,7 +596,7 @@ class Robot(BaseEntity):
                 best_visitor = visitor
 
         if best_visitor is not None:
-            self.target_visitor = best_visitor
+            self.set_target_visitor(best_visitor)
             self.target_visitor.assigned_robot = self
             self.state_machine.trigger(Robot.Trigger.VISITOR_IN_QUEUE)
         else:
@@ -550,7 +606,7 @@ class Robot(BaseEntity):
         if self.target_visitor is not None:
             if self.state.value == Robot.State.PICK_VISITOR.value:
                 self.target_visitor.assigned_robot = None
-                self.target_visitor = None
+                self.set_target_visitor(None)
             elif self.state.value == Robot.State.PICK_RIDE.value:
                 self.target_visitor.assigned_ride = None
                 self.target_ride = None
@@ -608,10 +664,9 @@ class Robot(BaseEntity):
             self.target_visitor.assigned_robot = None
             self.target_visitor.transform.set_position(self.target_ride.entrance_queue.tail)
             self.target_visitor.state = Visitor.State.QUEUEING
-            self.simulation.funds += self.target_ride.entry_price * self.target_visitor.group_size
 
             self.target_ride = None
-            self.target_visitor = None
+            self.set_target_visitor(None)
             self.state_machine.trigger(Robot.Trigger.VISITOR_DROP_OFF)
         else: # Try another ride
             self.target_ride = self._find_best_ride(exclude_list=[self.target_ride])
@@ -635,7 +690,7 @@ class Robot(BaseEntity):
             self.target_visitor.transform.set_position(self.simulation.exit_queue.tail)
             self.target_visitor.state = Visitor.State.QUEUEING
             self.target_ride = None
-            self.target_visitor = None
+            self.set_target_visitor(None)
             self.state_machine.trigger(Robot.Trigger.VISITOR_DROP_OFF)
 
     def _find_best_charger(self, exclude_list: List[Charger] = []) -> Optional[Charger]:

@@ -23,6 +23,11 @@ class Ride(BaseEntity):
         RUNNING = "running"
         UNLOADING = "unloading"
 
+    _adult_only_rides: set[str] = {
+        "Haunted House",
+        "Roller Coaster",
+    }
+
     _tooltip_rides: set["Ride"] = set()
 
     def __init__(
@@ -69,6 +74,10 @@ class Ride(BaseEntity):
     def tooltip_visible(self) -> bool:
         return self._tooltip_visible
 
+    @property
+    def children_allowed(self) -> bool:
+        return not (self.name in Ride._adult_only_rides)
+
     def set_tooltip_visible(self, value: bool) -> None:
         self._tooltip_visible = value
         if value:
@@ -93,8 +102,14 @@ class Ride(BaseEntity):
                 return
             visitor = self.entrance_queue.groups[0]
             if visitor.state == Visitor.State.IN_QUEUE:
-                if self.riders.can_accept_members(visitor.group_size):
+                if (
+                    visitor.group_type == Visitor.GroupType.WITH_CHILDREN
+                    and not self.children_allowed
+                ):
+                    self._maybe_exit_ride(visitor)
+                elif self.riders.can_accept_members(visitor.group_size):
                     self.riders.add(visitor)
+                    self.simulation.funds += self.entry_price * visitor.group_size
                     visitor.state = Visitor.State.ON_RIDE
                     visitor.assigned_ride = self
                     visitor.transform.set_position(self.transform.position)
@@ -116,16 +131,7 @@ class Ride(BaseEntity):
         elif self.run_state == Ride.RunState.UNLOADING:
             if self.riders.count > 0:
                 visitor = self.riders.groups[0]
-                if not (
-                    self.exit_queue.can_accept(1)
-                    and self.exit_queue.can_accept_members(visitor.group_size)
-                    and self.exit_queue.can_fit(visitor)
-                ): return
-                self.exit_queue.add(visitor)
-                visitor.state = Visitor.State.QUEUEING
-                visitor.assigned_ride = None
-                visitor.target_position = None
-                visitor.transform.set_position(self.exit_queue.tail)
+                self._maybe_exit_ride(visitor)
             else:
                 self.run_state = Ride.RunState.LOADING
 
@@ -139,3 +145,15 @@ class Ride(BaseEntity):
         ):
             can_accept = False
         return can_accept
+
+    def _maybe_exit_ride(self, visitor: Visitor):
+        if (
+            self.exit_queue.can_accept(1)
+            and self.exit_queue.can_accept_members(visitor.group_size)
+            and self.exit_queue.can_fit(visitor)
+        ):
+            self.exit_queue.add(visitor)
+            visitor.state = Visitor.State.QUEUEING
+            visitor.assigned_ride = None
+            visitor.target_position = None
+            visitor.transform.set_position(self.exit_queue.tail)
