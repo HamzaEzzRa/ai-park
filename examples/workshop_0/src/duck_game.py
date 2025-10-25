@@ -11,10 +11,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ipycanvas import Canvas, hold_canvas
 from ipyevents import Event
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
-
 from ai.fsm.core import Machine, MachineError
 from park.internal.collider import BoxCollider
 from park.internal.layers import CollisionLayer
