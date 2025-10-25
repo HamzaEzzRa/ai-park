@@ -53,11 +53,6 @@ def train_recognition_model(
     epochs: int = 20,
     learning_rate: float = 1e-3,
 ) -> tuple[keras.Model, keras.callbacks.History]:
-    """Compile and train the recognition model on visitor data.
-
-    If ``train_data`` is omitted the helper builds a :class:`VisitorDataset`
-    using image dimensions inferred from the model input.
-    """
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     losses = {
         "group_type": keras.losses.SparseCategoricalCrossentropy(),
