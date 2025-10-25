@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Dict
 
+import numpy as np
 from ipycanvas import Canvas, MultiCanvas, hold_canvas
+from PIL import Image as PILImage
 
 from park.entities.ride import Ride
 from park.entities.robot import Robot
@@ -18,6 +20,7 @@ from park.stats import Curve
 
 if TYPE_CHECKING:
     from park.entities.core import BaseEntity
+    from park.internal.sprite import Sprite
     from park.logic.node import Node
     from park.simulation import Simulation
 
@@ -33,7 +36,8 @@ class Colors:
 
     ride: str = "#d276df"
     robot: str = "#78b7ff"
-    visitor: str = "#ff9f9f"
+    visitor_adult: str = "#ff9f9f"
+    visitor_child: str = "#ffde6f"
     collider: str = "#f4c542"
     queue: str = "#2bff004e"
     charger: str = "#16c542"
@@ -538,6 +542,40 @@ class Renderer:
             canvas.move_to(center.x + radius, center.y)
             canvas.arc(center.x, center.y, radius, 0, 2 * math.pi)
             canvas.stroke()
+
+            if sprite.primitive_canvas is None:
+                sprite.primitive_canvas = Canvas(
+                    width=int(sprite.size.x),
+                    height=int(sprite.size.y),
+                    sync_image_data=True
+                )
+                p_canvas = sprite.primitive_canvas
+                p_canvas.sync_image_data = True
+                p_canvas.clear()
+                p_canvas.fill_style = sprite.color
+                p_canvas.begin_path()
+                p_canvas.move_to(sprite.size.x / 2.0 + sprite.size.x / 2.0, sprite.size.y / 2.0)
+                p_canvas.arc(
+                    sprite.size.x / 2.0,
+                    sprite.size.y / 2.0,
+                    sprite.size.x / 2.0,
+                    0,
+                    2 * math.pi
+                )
+                p_canvas.fill()
+                p_canvas.stroke_style = Colors.label
+                p_canvas.line_width = 0.5
+                p_canvas.begin_path()
+                p_canvas.move_to(sprite.size.x / 2.0 + sprite.size.x / 2.0, sprite.size.y / 2.0)
+                p_canvas.arc(
+                    sprite.size.x / 2.0,
+                    sprite.size.y / 2.0,
+                    sprite.size.x / 2.0,
+                    0,
+                    2 * math.pi
+                )
+                p_canvas.stroke()
+
             return True
 
         if sprite.shape == SpriteShape.RECT:
@@ -548,52 +586,109 @@ class Renderer:
             canvas.stroke_style = Colors.label
             canvas.line_width = 1
             canvas.stroke_rect(x0, y0, width, height)
+
+            if sprite.primitive_canvas is None:
+                sprite.primitive_canvas = Canvas(
+                    width=int(sprite.size.x),
+                    height=int(sprite.size.y),
+                    sync_image_data=True
+                )
+                p_canvas = sprite.primitive_canvas
+                p_canvas.sync_image_data = True
+                p_canvas.clear()
+                p_canvas.fill_style = sprite.color
+                p_canvas.fill_rect(0, 0, sprite.size.x, sprite.size.y)
+                p_canvas.stroke_style = Colors.label
+                p_canvas.line_width = 1
+                p_canvas.stroke_rect(0, 0, sprite.size.x, sprite.size.y)
+
             return True
 
         return False
 
-    def _draw_group_sprite(self, canvas: Canvas, entity, center: Vector2D, width: float, height: float, sprite) -> None:
-        members = max(1, int(sprite.data.get("members", getattr(entity, "group_size", 1))))
-        cols = max(1, int(math.ceil(math.sqrt(members))))
-        rows = int(math.ceil(members / cols))
+    def _draw_group_sprite(self, canvas: Canvas, entity, center: Vector2D, width: float, height: float, sprite: Sprite) -> None:
+        members = getattr(entity, "members", getattr(entity, "group_size", 1))
+        member_count = len(members) if isinstance(members, list) else int(members)
+        if member_count <= 0:
+            return
 
-        radius = min(width / (cols * 2.0), height / (rows * 2.0))
+        cols = max(1, int(math.ceil(math.sqrt(member_count))))
+        rows = int(math.ceil(member_count / cols))
+        vid = str(getattr(entity, "id", "v"))
+
+        def member_color(idx: int) -> str:
+            if isinstance(members, list) and members[idx] == Visitor.MemberType.CHILD:
+                return Colors.visitor_child
+            return Colors.visitor_adult
+
+        def compute_centers(target_width: float, target_height: float, offset_x: float, offset_y: float):
+            radius = min(target_width / (cols * 2.0), target_height / (rows * 2.0))
+            if radius <= 0:
+                return [], 0.0
+
+            jitter_amp = 0.5 * radius
+            centers = []
+            for k in range(member_count):
+                r_idx = k // cols
+                c_idx = k % cols
+                cell_w = target_width / cols
+                cell_h = target_height / rows
+                cx = offset_x + (c_idx + 0.5) * cell_w
+                cy = offset_y + (r_idx + 0.5) * cell_h
+                jx = (Renderer._hash01(f"{vid}:{k}:x") - 0.5) * 2 * jitter_amp
+                jy = (Renderer._hash01(f"{vid}:{k}:y") - 0.5) * 2 * jitter_amp
+                cx = min(max(cx + jx, offset_x + radius), offset_x + target_width - radius)
+                cy = min(max(cy + jy, offset_y + radius), offset_y + target_height - radius)
+                centers.append((cx, cy, member_color(k)))
+            return centers, radius
+
+        screen_offset_x = center.x - width / 2.0
+        screen_offset_y = center.y - height / 2.0
+        centers, radius = compute_centers(width, height, screen_offset_x, screen_offset_y)
         if radius <= 0:
             return
 
-        x0 = center.x - width / 2.0
-        y0 = center.y - height / 2.0
-        jitter_amp = 0.5 * radius
-
-        centers = []
-        for k in range(members):
-            r_idx = k // cols
-            c_idx = k % cols
-            cell_w = width / cols
-            cell_h = height / rows
-            cx = x0 + (c_idx + 0.5) * cell_w
-            cy = y0 + (r_idx + 0.5) * cell_h
-            vid = str(getattr(entity, "id", "v"))
-            jx = (Renderer._hash01(f"{vid}:{k}:x") - 0.5) * 2 * jitter_amp
-            jy = (Renderer._hash01(f"{vid}:{k}:y") - 0.5) * 2 * jitter_amp
-            cx = min(max(cx + jx, x0 + radius), x0 + width - radius)
-            cy = min(max(cy + jy, y0 + radius), y0 + height - radius)
-            centers.append((cx, cy))
-
-        canvas.fill_style = sprite.color
-        canvas.begin_path()
-        for cx, cy in centers:
+        for cx, cy, fill_color in centers:
+            canvas.begin_path()
+            canvas.fill_style = fill_color
             canvas.move_to(cx + radius, cy)
             canvas.arc(cx, cy, radius, 0, 2 * math.pi)
-        canvas.fill()
+            canvas.fill()
 
-        canvas.stroke_style = Colors.label
-        canvas.line_width = 0.5
-        canvas.begin_path()
-        for cx, cy in centers:
+            canvas.stroke_style = Colors.label
+            canvas.line_width = 0.5
+            canvas.begin_path()
             canvas.move_to(cx + radius, cy)
             canvas.arc(cx, cy, radius, 0, 2 * math.pi)
-        canvas.stroke()
+            canvas.stroke()
+
+        if sprite.primitive_canvas is None:
+            sprite.primitive_canvas = Canvas(
+                width=max(1, int(round(sprite.size.x))),
+                height=max(1, int(round(sprite.size.y))),
+                sync_image_data=True
+            )
+        p_canvas = sprite.primitive_canvas
+        p_canvas.sync_image_data = True
+        p_canvas.clear()
+
+        primitive_centers, primitive_radius = compute_centers(sprite.size.x, sprite.size.y, 0.0, 0.0)
+        if primitive_radius <= 0:
+            return
+
+        for pcx, pcy, pfill_color in primitive_centers:
+            p_canvas.begin_path()
+            p_canvas.fill_style = pfill_color
+            p_canvas.move_to(pcx + primitive_radius, pcy)
+            p_canvas.arc(pcx, pcy, primitive_radius, 0, 2 * math.pi)
+            p_canvas.fill()
+
+            p_canvas.stroke_style = Colors.label
+            p_canvas.line_width = 0.5
+            p_canvas.begin_path()
+            p_canvas.move_to(pcx + primitive_radius, pcy)
+            p_canvas.arc(pcx, pcy, primitive_radius, 0, 2 * math.pi)
+            p_canvas.stroke()
 
     def _render_background(self, canvas: Canvas):
         self._clear(canvas, Colors.background)
@@ -948,6 +1043,9 @@ class Renderer:
                     f"Ride: {selected_robot.target_ride.name if selected_robot.target_ride else '--'}",
                     f"Health: {selected_robot.health_percentage:.2f}%",
                     f"Battery: {selected_robot.battery_percentage:.2f}%",
+                    f"Predicted Type:",
+                    f"\t{selected_robot.predicted_group_type.name.lower() if selected_robot.predicted_group_type else '--'}",
+                    f"Predicted Size: {selected_robot.predicted_group_size if selected_robot.predicted_group_size else '--'}",
                 ]
             elif selected_visitor is not None:
                 lines = [

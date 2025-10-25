@@ -31,6 +31,8 @@ class Sprite:
         self.shape: SpriteShape = shape
         self.image_path: Optional[str] = image_path
         self.data: Dict[str, Any] = data
+        self.primitive_canvas: Optional["Canvas"] = None
+
         self._image: Optional["Image"] = None  # just to get image width and height
         self._image_array: Optional[np.ndarray] = None
         self._canvas: Optional["Canvas"] = None
@@ -119,6 +121,23 @@ class Sprite:
         new_sprite._canvas = self._canvas
         new_sprite.set_enabled(self.enabled)
         return new_sprite
+
+    def primitive_canvas_to_image(self) -> Optional["Image"]:
+        if self.primitive_canvas is None:
+            return None
+
+        self.primitive_canvas.sync_image_data = True
+        data = np.asarray(
+            self.primitive_canvas.get_image_data(
+                0,
+                0,
+                self.primitive_canvas.width,
+                self.primitive_canvas.height
+            ),
+            dtype=np.uint8
+        )
+        image = PILImage.fromarray(data, mode="RGBA")
+        return image
 
     def _ensure_image(self) -> Optional["Image"]:
         if self.image_path is None:

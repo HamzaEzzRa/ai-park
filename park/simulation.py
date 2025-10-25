@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
@@ -10,7 +11,8 @@ from park.entities.robot import Robot
 from park.entities.visitor import Visitor
 from park.internal.collider import BoxCollider
 from park.internal.layers import CollisionLayer
-from park.internal.math import Vector2D
+from park.internal.math import Rect, Vector2D
+from park.internal.physics import Physics
 from park.internal.rigidbody import RigidBody
 from park.internal.sprite import Sprite, SpriteShape
 from park.logic.queue import VisitorQueue
@@ -26,9 +28,11 @@ class Simulation:
             self,
             world: World,
             starting_funds: float = 10000.0,
+            max_visitor_group_size: int = 3,
             rng: Optional[np.random.Generator] = None,
         ):
         self.world = world
+        self.max_visitor_group_size = max_visitor_group_size
         if rng is None:
             rng = np.random.default_rng()
         self.rng = rng
@@ -163,13 +167,39 @@ class Simulation:
                     self.world.height - size.y // 2
                 )
             )
+        collides = True
+        while collides:
+            colliders = Physics.check_rect(
+                Rect(
+                    position.x - size.x / 2,
+                    position.y - size.y / 2,
+                    size.x,
+                    size.y
+                ),
+                CollisionLayer.ALL_BITS
+            )
+            if not colliders:
+                collides = False
+            else:
+                position = Vector2D(
+                    self.rng.uniform(
+                        size.x // 2,
+                        self.world.width - size.x // 2
+                    ),
+                    self.rng.uniform(
+                        size.y // 2,
+                        self.world.height - size.y // 2
+                    )
+                )
+
         if move_speed is None:
             move_speed = 1.0
 
         robot = Robot(
             simulation=self,
             position=position,
-            move_speed=move_speed
+            move_speed=move_speed,
+            rng=self.rng
         )
         robot.attach_component(
             Sprite(
@@ -198,7 +228,7 @@ class Simulation:
         desired_rides: Optional[int] = None
     ) -> bool:
         if group_size is None:
-            group_size = self.rng.integers(1, 4)
+            group_size = self.rng.integers(1, self.max_visitor_group_size + 1)
         if desired_rides is None:
             desired_rides = self.rng.integers(1, 4)
 
@@ -208,13 +238,14 @@ class Simulation:
             group_size=group_size,
             move_speed=move_speed,
             desired_rides=desired_rides,
-            member_spacing=8.0
+            member_spacing=8.0,
+            rng=self.rng
         )
         group_bounds = visitor.group_bounds()
         visitor.attach_component(
             Sprite(
                 size=group_bounds,
-                color=Colors.visitor,
+                color=Colors.visitor_adult,
                 shape=SpriteShape.GROUP,
                 data={"spacing": visitor.member_spacing, "members": visitor.group_size},
             )

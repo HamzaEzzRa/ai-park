@@ -3,3 +3,5 @@ ipycanvas
 ipyevents
 jupyter
 numpy
+tensorflow
+keras
