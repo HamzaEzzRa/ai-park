@@ -436,7 +436,7 @@ class Renderer:
 
         self._dirty[Renderer.SimRenderLayer.RIDES] = True
         self._dirty[Renderer.SimRenderLayer.ROBOTS] = True
-        self._dirty[Renderer.SimRenderLayer.VISITORS] = True        
+        self._dirty[Renderer.SimRenderLayer.VISITORS] = True
 
         if self._show_debug_grids:
             need_debug = self._debug_grid_force_full
