@@ -122,7 +122,10 @@ class DuckGame:
         self._keys_down: set[str] = set()
         self._key_repeat_timers: Dict[str, float] = {}
         self._key_repeat_interval = 0.18
-        self._loop_task: Optional[asyncio.Task] = None
+        
+        self._logic_task: Optional[asyncio.Task] = None
+        self._draw_task: Optional[asyncio.Task] = None
+
         self._last_state: Optional[str] = None
         self._waiting_for_restart = False
         self._pending_reset = False
@@ -190,7 +193,11 @@ class DuckGame:
         self._setup_level(initial=True)
         self._bind_events()
         self._draw()
-        self.canvas.focus()
+
+        try:
+            self.canvas.focus()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # Level construction
@@ -424,19 +431,34 @@ class DuckGame:
     # Game loop & rendering
     # ------------------------------------------------------------------ #
     def start(self) -> None:
-        if self._loop_task is None or self._loop_task.done():
-            self._loop_task = asyncio.create_task(self._loop())
-        self.canvas.focus()
+        if self._logic_task is None or self._logic_task.done():
+            self._logic_task = asyncio.create_task(self._logic_loop())
+        if self._draw_task is None or self._draw_task.done():
+            self._draw_task = asyncio.create_task(self._draw_loop())
+        try:
+            self.canvas.focus()
+        except Exception:
+            pass
 
     def stop(self) -> None:
-        if self._loop_task and not self._loop_task.done():
-            self._loop_task.cancel()
-        self._loop_task = None
+        if self._logic_task and not self._logic_task.done():
+            self._logic_task.cancel()
+        self._logic_task = None
+        if self._draw_task and not self._draw_task.done():
+            self._draw_task.cancel()
+        self._draw_task = None
 
-    async def _loop(self) -> None:
+    async def _logic_loop(self) -> None:
         try:
             while True:
                 self._update()
+                await asyncio.sleep(self.dt)
+        except asyncio.CancelledError:
+            pass
+
+    async def _draw_loop(self) -> None:
+        try:
+            while True:
                 self._draw()
                 await asyncio.sleep(self.dt)
         except asyncio.CancelledError:

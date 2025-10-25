@@ -463,6 +463,24 @@ class Renderer:
                 self._blit(layer)
                 self._dirty[layer] = False
 
+    def refresh_static_layers(self):
+        static_layers = [
+            Renderer.SimRenderLayer.BACKGROUND,
+            Renderer.SimRenderLayer.GRID,
+            Renderer.SimRenderLayer.CHARGERS
+        ]
+        if self._show_queues:
+            static_layers.append(Renderer.SimRenderLayer.QUEUES)
+        if self._show_debug_grids:
+            static_layers.append(Renderer.SimRenderLayer.GRID_DEBUG)
+
+        for layer in static_layers:
+            front: Canvas = self._front[layer]
+            back: Canvas = self._back[layer]
+            with hold_canvas(front):
+                front.clear()
+                front.draw_image(back, 0, 0)
+
     def _clear(self, canvas: Canvas, color=None):
         canvas.clear()
         if color:
